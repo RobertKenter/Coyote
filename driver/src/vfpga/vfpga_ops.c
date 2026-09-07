@@ -39,7 +39,9 @@ int vfpga_dev_open(struct inode *inode, struct file *file) {
 
     // Set file private data, so the attributes of the opened vfpga_dev can be accessed in other methods
     file->private_data = (void *) device;
+    mutex_lock(&device->pid_lock);
     device->ref_cnt++;
+    mutex_unlock(&device->pid_lock);
 
     return 0;
 }
@@ -54,8 +56,11 @@ int vfpga_dev_release(struct inode *inode, struct file *file) {
     BUG_ON(!device);
 
     // Traverse all Coyote threads for this vFPGA device and free their resources
+    mutex_lock(&device->pid_lock);
     if(--device->ref_cnt == 0) {
-        hash_for_each(hpid_ctid_map[device->bd_data->dev_id][device->id], bkt, tmp_h_entry, entry) {
+        struct hlist_node *tmp_h_next;
+        mutex_lock(&device->mmu_lock);
+        hash_for_each_safe(hpid_ctid_map[device->bd_data->dev_id][device->id], bkt, tmp_h_next, tmp_h_entry, entry) {
             list_for_each_safe(l_p, l_n, &tmp_h_entry->ctid_list) {
                 // entry
                 struct ctid_entry *l_entry = list_entry(l_p, struct ctid_entry, list);
@@ -73,28 +78,31 @@ int vfpga_dev_release(struct inode *inode, struct file *file) {
                 device->pid_alloc = &device->ctid_chunks[l_entry->ctid];
 
                 // Delete entry
-                list_del(&l_entry->list); 
-
-                // Remove notifier and entry if all cThreads for this HPID are gone
-                if(list_empty(&tmp_h_entry->ctid_list)) {
-                    #ifdef HMM_KERNEL                        
-                        // remove notifier
-                        if(en_hmm) {
-                            dbg_info("releasing notifier for hpid %d\n", tmp_h_entry->hpid);
-                            mmu_interval_notifier_remove(&tmp_h_entry->mmu_not);
-                        }
-                    #endif 
-
-                    hash_del(&tmp_h_entry->entry);
-                }
+                list_del(&l_entry->list);
+                kfree(l_entry);
             }
+
+            #ifdef HMM_KERNEL
+                if(en_hmm) {
+                    dbg_info("releasing notifier for hpid %d\n", tmp_h_entry->hpid);
+                    mmu_interval_notifier_remove(&tmp_h_entry->mmu_not);
+                }
+            #endif
+            hash_del(&tmp_h_entry->entry);
+            kfree(tmp_h_entry);
         }
+        mutex_unlock(&device->mmu_lock);
     }
+    mutex_unlock(&device->pid_lock);
     
     int minor = iminor(inode);
     dbg_info("vFPGA device %d released, spid %d, ref cnt %d\n", minor, current->pid, device->ref_cnt);
 
     return 0;
+}
+
+static bool ctid_valid(uint64_t ctid) {
+    return ctid < N_CTID_MAX;
 }
 
 long vfpga_dev_ioctl_impl(struct vfpga_dev *device, unsigned int command, unsigned long arg, bool from_kernel) {
@@ -131,7 +139,7 @@ long vfpga_dev_ioctl_impl(struct vfpga_dev *device, unsigned int command, unsign
                 pid_t hpid = (pid_t) tmp[0];
 
                 // Check if a new Coyote thread can be registered
-                if (device->num_free_ctid_chunks == 0) {
+                if (!device->pid_alloc) {
                     dbg_info("no free ctid chunks left for hpid %d, spid %d\n", hpid, spid);
                     mutex_unlock(&device->pid_lock);
                     return -ENOMEM;
@@ -167,6 +175,7 @@ long vfpga_dev_ioctl_impl(struct vfpga_dev *device, unsigned int command, unsign
                             if (ret_val) {
                                 dbg_info("mmu notifier registration failed, vFPGA %d\n", device->id);
                                 kfree(new_h_entry);
+                                mutex_unlock(&device->pid_lock);
                                 return ret_val;
                             } 
                         }
@@ -210,6 +219,8 @@ long vfpga_dev_ioctl_impl(struct vfpga_dev *device, unsigned int command, unsign
             if (ret_val != 0) {
                 pr_warn("user data could not be coppied, return %d\n", ret_val);
             } else {
+                if (!ctid_valid(tmp[0]))
+                    return -EINVAL;
                 mutex_lock(&device->pid_lock);
                 
                 int32_t ctid = (int32_t) tmp[0];
@@ -217,28 +228,32 @@ long vfpga_dev_ioctl_impl(struct vfpga_dev *device, unsigned int command, unsign
                 pid_t spid = current->pid;
             
                 struct hpid_ctid_pages *tmp_h_entry;
+                struct hlist_node *tmp_h_next;
                 struct list_head *l_p, *l_n;
                 struct ctid_entry *l_entry;
 
                 // Traverse all Coyote thread IDs until a match is found
-                hash_for_each_possible(hpid_ctid_map[device->bd_data->dev_id][device->id], tmp_h_entry, entry, hpid) {
+                hash_for_each_possible_safe(hpid_ctid_map[device->bd_data->dev_id][device->id], tmp_h_entry, tmp_h_next, entry, hpid) {
                     if(tmp_h_entry->hpid == hpid) {
                         list_for_each_safe(l_p, l_n, &tmp_h_entry->ctid_list) {
                             l_entry = list_entry(l_p, struct ctid_entry, list);
 
                             if(l_entry->ctid == ctid) {
                                 // Unmap any leftover user pages for this Coyot thread
+                                mutex_lock(&device->mmu_lock);
                                 #ifdef HMM_KERNEL
                                     if(en_hmm)
                                         free_card_mem(device, ctid);
                                     else 
                                 #endif                            
                                     tlb_put_user_pages_ctid(device, ctid, hpid, 1);
+                                mutex_unlock(&device->mmu_lock);
 
                                 // Unregister Coyote thread and delete entry from list
                                 device->ctid_chunks[l_entry->ctid].next = device->pid_alloc;
                                 device->pid_alloc = &device->ctid_chunks[l_entry->ctid];
-                                list_del(&l_entry->list);   
+                                list_del(&l_entry->list);
+                                kfree(l_entry);
                             }
                         }
 
@@ -251,6 +266,7 @@ long vfpga_dev_ioctl_impl(struct vfpga_dev *device, unsigned int command, unsign
                                 }
                             #endif 
                             hash_del(&tmp_h_entry->entry);
+                            kfree(tmp_h_entry);
                         }
                     }
                 }
@@ -274,6 +290,8 @@ long vfpga_dev_ioctl_impl(struct vfpga_dev *device, unsigned int command, unsign
             if (ret_val) {
                 pr_warn("user data could not be coppied, ret_val: %d\n", ret_val);
             } else {
+                if (!ctid_valid(tmp[0]))
+                    return -EINVAL;
                 ret_val = vfpga_register_eventfd(device, (int32_t) tmp[0], tmp[1]);
                 if (ret_val) {
                     dbg_info("eventfd could not be registered, ret_val: %d\n", ret_val);
@@ -293,6 +311,8 @@ long vfpga_dev_ioctl_impl(struct vfpga_dev *device, unsigned int command, unsign
             if (ret_val) {
                 pr_warn("user data could not be coppied, ret_val: %d\n", ret_val);
             } else {
+                if (!ctid_valid(tmp[0]))
+                    return -EINVAL;
                 vfpga_unregister_eventfd(device, (int32_t) tmp[0]);
             }
             break;
@@ -309,6 +329,8 @@ long vfpga_dev_ioctl_impl(struct vfpga_dev *device, unsigned int command, unsign
             if (ret_val != 0) {
                 pr_warn("user data could not be coppied, return %d\n", ret_val);
             } else {
+                if (!ctid_valid(tmp[2]))
+                    return -EINVAL;
                 int32_t ctid = (int32_t)tmp[2];
                 pid_t hpid = device->pid_array[ctid];
 
@@ -347,6 +369,8 @@ long vfpga_dev_ioctl_impl(struct vfpga_dev *device, unsigned int command, unsign
                 pr_warn("user data could not be coppied, return %d\n", ret_val);
             } else {
                 if(!en_hmm) {
+                    if (!ctid_valid(tmp[1]))
+                        return -EINVAL;
                     int32_t ctid = (int32_t) tmp[1];
                     pid_t hpid = device->pid_array[ctid];
 
@@ -374,6 +398,8 @@ long vfpga_dev_ioctl_impl(struct vfpga_dev *device, unsigned int command, unsign
                 if (ret_val != 0) {
                     pr_warn("user data could not be coppied, return %d\n", ret_val);
                 } else {
+                    if (!ctid_valid(tmp[2]))
+                        return -EINVAL;
                     int32_t ctid = (int32_t) tmp[2];
 
                     dbg_info("mapping dmabuff for vFPGA %d, fd %d, virtual address %llx, ctid %d\n", device->id, (int) tmp[0], tmp[1], ctid);
@@ -410,6 +436,8 @@ long vfpga_dev_ioctl_impl(struct vfpga_dev *device, unsigned int command, unsign
                     pr_warn("user data could not be coppied, return %d\n", ret_val);
                 } else {
                     if(!en_hmm) {
+                        if (!ctid_valid(tmp[1]))
+                            return -EINVAL;
                         int32_t ctid = (int32_t) tmp[1];
 
                         dbg_info("unmapping dmabuff for vFPGA %d, ctid %d\n", device->id, ctid);
@@ -445,7 +473,13 @@ long vfpga_dev_ioctl_impl(struct vfpga_dev *device, unsigned int command, unsign
                 pr_warn("user data could not be coppied, return %d\n", ret_val);
             } else {
                 if(!en_hmm) {
+                    if (!ctid_valid(tmp[2]))
+                        return -EINVAL;
+                    mutex_lock(&device->mmu_lock);
+                    change_tlb_lock(device);
                     ret_val = offload_user_pages(device, tmp[0], (uint32_t) tmp[1], (int32_t) tmp[2]);
+                    change_tlb_lock(device);
+                    mutex_unlock(&device->mmu_lock);
                     if(ret_val) {
                         dbg_info("buffer could not be offloaded, ret_val: %d\n", ret_val);
                     }
@@ -471,7 +505,13 @@ long vfpga_dev_ioctl_impl(struct vfpga_dev *device, unsigned int command, unsign
                 pr_warn("user data could not be coppied, return %d\n", ret_val);
             } else {
                 if(!en_hmm) {
+                    if (!ctid_valid(tmp[2]))
+                        return -EINVAL;
+                    mutex_lock(&device->mmu_lock);
+                    change_tlb_lock(device);
                     ret_val = sync_user_pages(device, tmp[0], (uint32_t) tmp[1], (int32_t) tmp[2]);
+                    change_tlb_lock(device);
+                    mutex_unlock(&device->mmu_lock);
                     if (ret_val) {
                         dbg_info("buffer could not be synced, ret_val: %d\n", ret_val);
                     }
@@ -610,6 +650,8 @@ long vfpga_dev_ioctl_impl(struct vfpga_dev *device, unsigned int command, unsign
             if (ret_val != 0) {
                 pr_warn("user data could not be copied, return %d\n", ret_val);
             } else {
+                if (!ctid_valid(tmp[0]))
+                    return -EINVAL;
                 int32_t ctid = (int32_t) tmp[0];
                 dbg_info("marking notification with vfpga ID %d, ctid %d as processed\n", device->id, ctid);
                 up(&user_notifier_lock[device->bd_data->dev_id][device->id][ctid]);
@@ -631,6 +673,8 @@ long vfpga_dev_ioctl_impl(struct vfpga_dev *device, unsigned int command, unsign
                 pr_warn("user data could not be copied, return %d\n", ret_val);
             } else {
                 // 2. send the interrupt value for this ctid!
+                if (!ctid_valid(tmp[0]))
+                    return -EINVAL;
                 int32_t ctid = (int32_t) tmp[0];
                 dbg_info("retrieving interrupt value for vfpga ID %d, ctid %d\n", device->id, ctid);
                 tmp[0] = interrupt_value[device->bd_data->dev_id][device->id][ctid];
