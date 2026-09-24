@@ -251,7 +251,7 @@ void cThread::postCmd(uint64_t offs_3, uint64_t offs_2, uint64_t offs_1, uint64_
     // Check outstanding commands; to avoid oversaturating the command FIFO
     while (cmd_cnt > (CMD_FIFO_DEPTH - CMD_FIFO_THR)) {
         #ifdef EN_AVX
-        cmd_cnt = fcnfg.en_avx ? LOW_32(_mm256_extract_epi32(cnfg_reg_avx[static_cast<uint32_t>(CnfgAvxRegs::CTRL_REG)], 0x0)) :
+        cmd_cnt = fcnfg.en_avx ? LOW_32(_mm256_extract_epi32(avxRegs()[static_cast<uint32_t>(CnfgAvxRegs::CTRL_REG)], 0x0)) :
                                 cnfg_reg[static_cast<uint32_t>(CnfgLegRegs::CTRL_REG)];
         #else
         cmd_cnt = cnfg_reg[static_cast<uint32_t>(CnfgLegRegs::CTRL_REG)];
@@ -265,7 +265,7 @@ void cThread::postCmd(uint64_t offs_3, uint64_t offs_2, uint64_t offs_1, uint64_
     // Send the commands
     #ifdef EN_AVX
     if (fcnfg.en_avx) {
-        cnfg_reg_avx[static_cast<uint32_t>(CnfgAvxRegs::CTRL_REG)] = _mm256_set_epi64x(offs_3, offs_2, offs_1, offs_0);
+        avxRegs()[static_cast<uint32_t>(CnfgAvxRegs::CTRL_REG)] = _mm256_set_epi64x(offs_3, offs_2, offs_1, offs_0);
     } else {
     #endif
         cnfg_reg[static_cast<uint32_t>(CnfgLegRegs::VADDR_WR_REG)] = offs_3;
@@ -863,7 +863,7 @@ uint32_t cThread::checkCompleted(CoyoteOper coper) const {
 		} else {
             #ifdef EN_AVX
 			if (fcnfg.en_avx) 
-				return _mm256_extract_epi32(cnfg_reg_avx[static_cast<uint32_t>(CnfgAvxRegs::STAT_DMA_REG) + ctid], 1);
+				return _mm256_extract_epi32(avxRegs()[static_cast<uint32_t>(CnfgAvxRegs::STAT_DMA_REG) + ctid], 1);
 			else
             #endif
 				return (HIGH_32(cnfg_reg[static_cast<uint32_t>(CnfgLegRegs::STAT_DMA_REG) + ctid]));
@@ -874,7 +874,7 @@ uint32_t cThread::checkCompleted(CoyoteOper coper) const {
 		} else {
             #ifdef EN_AVX
 			if (fcnfg.en_avx)
-            	return _mm256_extract_epi32(cnfg_reg_avx[static_cast<uint32_t>(CnfgAvxRegs::STAT_DMA_REG) + ctid], 0);
+            	return _mm256_extract_epi32(avxRegs()[static_cast<uint32_t>(CnfgAvxRegs::STAT_DMA_REG) + ctid], 0);
 			else 
             #endif
 				return (LOW_32(cnfg_reg[static_cast<uint32_t>(CnfgLegRegs::STAT_DMA_REG) + ctid]));
@@ -885,7 +885,7 @@ uint32_t cThread::checkCompleted(CoyoteOper coper) const {
 		} else {
             #ifdef EN_AVX
 			if (fcnfg.en_avx) 
-				return _mm256_extract_epi32(cnfg_reg_avx[static_cast<uint32_t>(CnfgAvxRegs::STAT_DMA_REG) + ctid], 2);
+				return _mm256_extract_epi32(avxRegs()[static_cast<uint32_t>(CnfgAvxRegs::STAT_DMA_REG) + ctid], 2);
 			else 
             #endif
 				return (LOW_32(cnfg_reg[static_cast<uint32_t>(CnfgLegRegs::STAT_RDMA_REG) + ctid]));
@@ -896,7 +896,7 @@ uint32_t cThread::checkCompleted(CoyoteOper coper) const {
         } else {
             #ifdef EN_AVX
             if (fcnfg.en_avx) 
-                return _mm256_extract_epi32(cnfg_reg_avx[static_cast<uint32_t>(CnfgAvxRegs::STAT_DMA_REG) + ctid], 3);
+                return _mm256_extract_epi32(avxRegs()[static_cast<uint32_t>(CnfgAvxRegs::STAT_DMA_REG) + ctid], 3);
             else
             #endif
                 return (HIGH_32(cnfg_reg[static_cast<uint32_t>(CnfgLegRegs::STAT_RDMA_REG) + ctid]));  
@@ -917,7 +917,7 @@ void cThread::clearCompleted() {
 
     #ifdef EN_AVX
 	if (fcnfg.en_avx) {
-		cnfg_reg_avx[static_cast<uint32_t>(CnfgAvxRegs::CTRL_REG)] = _mm256_set_epi64x(0, CTRL_CLR_STAT | ((ctid & CTRL_PID_MASK) << CTRL_PID_OFFS), 0, CTRL_CLR_STAT | ((ctid & CTRL_PID_MASK) << CTRL_PID_OFFS));
+		avxRegs()[static_cast<uint32_t>(CnfgAvxRegs::CTRL_REG)] = _mm256_set_epi64x(0, CTRL_CLR_STAT | ((ctid & CTRL_PID_MASK) << CTRL_PID_OFFS), 0, CTRL_CLR_STAT | ((ctid & CTRL_PID_MASK) << CTRL_PID_OFFS));
     } else {
     #endif
         cnfg_reg[static_cast<uint32_t>(CnfgLegRegs::CTRL_REG_2)] = CTRL_CLR_STAT | ((ctid & CTRL_PID_MASK) << CTRL_PID_OFFS);
@@ -932,7 +932,7 @@ void cThread::doArpLookup(uint32_t ip_addr) {
 
     #ifdef EN_AVX
     if (fcnfg.en_avx) {
-        cnfg_reg_avx[static_cast<uint32_t>(CnfgAvxRegs::NET_ARP_REG)] = _mm256_set_epi64x(0, 0, 0, ip_addr);
+        avxRegs()[static_cast<uint32_t>(CnfgAvxRegs::NET_ARP_REG)] = _mm256_set_epi64x(0, 0, 0, ip_addr);
     } else {
     #endif
         cnfg_reg[static_cast<uint32_t>(CnfgLegRegs::NET_ARP_REG)] = ip_addr;
@@ -1026,7 +1026,7 @@ void cThread::writeQpContext(uint32_t port) {
         // Write this information to the vFPGA configuration registers
         #ifdef EN_AVX
         if (fcnfg.en_avx) {
-            cnfg_reg_avx[static_cast<uint32_t>(CnfgAvxRegs::RDMA_CTX_REG)] = _mm256_set_epi64x(0, offs[2], offs[1], offs[0]);
+            avxRegs()[static_cast<uint32_t>(CnfgAvxRegs::RDMA_CTX_REG)] = _mm256_set_epi64x(0, offs[2], offs[1], offs[0]);
         } else {
         #endif
             cnfg_reg[static_cast<uint32_t>(CnfgLegRegs::RDMA_CTX_REG_0)] = offs[0];
@@ -1049,7 +1049,7 @@ void cThread::writeQpContext(uint32_t port) {
 
         #ifdef EN_AVX
         if (fcnfg.en_avx) {
-            cnfg_reg_avx[static_cast<uint32_t>(CnfgAvxRegs::RDMA_CONN_REG)] = _mm256_set_epi64x(0, offs[2], offs[1], offs[0]);
+            avxRegs()[static_cast<uint32_t>(CnfgAvxRegs::RDMA_CONN_REG)] = _mm256_set_epi64x(0, offs[2], offs[1], offs[0]);
         } else {
         #endif
             cnfg_reg[static_cast<uint32_t>(CnfgLegRegs::RDMA_CONN_REG_0)] = offs[0];
@@ -1093,7 +1093,7 @@ void cThread::writeQpCtx(uint32_t port, bool write_rpsn, bool write_rkey) {
         // Write this information to the vFPGA configuration registers
         #ifdef EN_AVX
         if (fcnfg.en_avx) {
-            cnfg_reg_avx[static_cast<uint32_t>(CnfgAvxRegs::RDMA_CTX_REG)] = _mm256_set_epi64x(0, offs[2], offs[1], offs[0]);
+            avxRegs()[static_cast<uint32_t>(CnfgAvxRegs::RDMA_CTX_REG)] = _mm256_set_epi64x(0, offs[2], offs[1], offs[0]);
         } else {
         #endif
             cnfg_reg[static_cast<uint32_t>(CnfgLegRegs::RDMA_CTX_REG_0)] = offs[0];
@@ -1129,7 +1129,7 @@ void cThread::writeQpConnection(uint32_t port) {
 
         #ifdef EN_AVX
         if (fcnfg.en_avx) {
-            cnfg_reg_avx[static_cast<uint32_t>(CnfgAvxRegs::RDMA_CONN_REG)] = _mm256_set_epi64x(0, offs[2], offs[1], offs[0]);
+            avxRegs()[static_cast<uint32_t>(CnfgAvxRegs::RDMA_CONN_REG)] = _mm256_set_epi64x(0, offs[2], offs[1], offs[0]);
         } else {
         #endif
             cnfg_reg[static_cast<uint32_t>(CnfgLegRegs::RDMA_CONN_REG_0)] = offs[0];
@@ -1379,14 +1379,14 @@ void cThread::printDebug() const {
     
     #ifdef EN_AVX
 	if (fcnfg.en_avx) {
-		std::cout << std::setw(35) << "Sent local reads: \t" <<  _mm256_extract_epi64(cnfg_reg_avx[static_cast<uint64_t>(CnfgAvxRegs::STAT_REG_0)], 0x0) << std::endl;
-        std::cout << std::setw(35) << "Sent local writes: \t" <<  _mm256_extract_epi64(cnfg_reg_avx[static_cast<uint64_t>(CnfgAvxRegs::STAT_REG_0)], 0x1) << std::endl;
-        std::cout << std::setw(35) << "Sent remote reads: \t" <<  _mm256_extract_epi64(cnfg_reg_avx[static_cast<uint64_t>(CnfgAvxRegs::STAT_REG_0)], 0x2) << std::endl;
-        std::cout << std::setw(35) << "Sent remote writes: \t" <<  _mm256_extract_epi64(cnfg_reg_avx[static_cast<uint64_t>(CnfgAvxRegs::STAT_REG_0)], 0x3) << std::endl;
+		std::cout << std::setw(35) << "Sent local reads: \t" <<  _mm256_extract_epi64(avxRegs()[static_cast<uint64_t>(CnfgAvxRegs::STAT_REG_0)], 0x0) << std::endl;
+        std::cout << std::setw(35) << "Sent local writes: \t" <<  _mm256_extract_epi64(avxRegs()[static_cast<uint64_t>(CnfgAvxRegs::STAT_REG_0)], 0x1) << std::endl;
+        std::cout << std::setw(35) << "Sent remote reads: \t" <<  _mm256_extract_epi64(avxRegs()[static_cast<uint64_t>(CnfgAvxRegs::STAT_REG_0)], 0x2) << std::endl;
+        std::cout << std::setw(35) << "Sent remote writes: \t" <<  _mm256_extract_epi64(avxRegs()[static_cast<uint64_t>(CnfgAvxRegs::STAT_REG_0)], 0x3) << std::endl;
         
-        std::cout << std::setw(35) << "Invalidations received: \t" <<  _mm256_extract_epi64(cnfg_reg_avx[static_cast<uint64_t>(CnfgAvxRegs::STAT_REG_1)], 0x0) << std::endl;
-        std::cout << std::setw(35) << "Page faults received: \t" <<  _mm256_extract_epi64(cnfg_reg_avx[static_cast<uint64_t>(CnfgAvxRegs::STAT_REG_1)], 0x1) << std::endl;
-        std::cout << std::setw(35) << "Notifications received: \t" <<  _mm256_extract_epi64(cnfg_reg_avx[static_cast<uint64_t>(CnfgAvxRegs::STAT_REG_1)], 0x2) << std::endl;
+        std::cout << std::setw(35) << "Invalidations received: \t" <<  _mm256_extract_epi64(avxRegs()[static_cast<uint64_t>(CnfgAvxRegs::STAT_REG_1)], 0x0) << std::endl;
+        std::cout << std::setw(35) << "Page faults received: \t" <<  _mm256_extract_epi64(avxRegs()[static_cast<uint64_t>(CnfgAvxRegs::STAT_REG_1)], 0x1) << std::endl;
+        std::cout << std::setw(35) << "Notifications received: \t" <<  _mm256_extract_epi64(avxRegs()[static_cast<uint64_t>(CnfgAvxRegs::STAT_REG_1)], 0x2) << std::endl;
 	} else {
     #endif
 		std::cout << std::setw(35) << "Sent local reads: \t" <<  cnfg_reg[static_cast<uint64_t>(CnfgLegRegs::STAT_REG_0)] << std::endl;
