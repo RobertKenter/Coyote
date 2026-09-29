@@ -122,13 +122,26 @@ assign rdma_ack.data.ack.strm = ack_meta_data[32+RDMA_QPN_BITS+1+DEST_BITS+:STRM
 assign rdma_ack.data.ack.rsrvd = 0;
 assign rdma_ack.data.last = ack_meta_data[32+RDMA_QPN_BITS+1+DEST_BITS+STRM_BITS+:1];
 
+// A QP set up again (BALBOA's full context write, not its rkey-only or remote-PSN-only updates
+// marked by these virtual addresses) also empties the QP's slots in rdma_flow
+metaIntf #(.STYPE(logic[RDMA_QPN_BITS-1:0])) qp_rst_in (.aclk(nclk), .aresetn(nresetn));
+metaIntf #(.STYPE(logic[RDMA_QPN_BITS-1:0])) qp_rst (.aclk(nclk), .aresetn(nresetn));
+
+assign qp_rst_in.valid = s_rdma_qp_interface.valid & s_rdma_qp_interface.ready &
+                         (s_rdma_qp_interface.data.vaddr != 48'hDEADBEEF) &
+                         (s_rdma_qp_interface.data.vaddr != 48'hFEEDBEEF);
+assign qp_rst_in.data = s_rdma_qp_interface.data.qp_num[RDMA_QPN_BITS-1:0];
+
+queue_meta #(.QDEPTH(4)) inst_qp_rst_q (.aclk(nclk), .aresetn(nresetn), .s_meta(qp_rst_in), .m_meta(qp_rst));
+
 rdma_flow inst_rdma_flow (
     .aclk(nclk),
     .aresetn(nresetn),
     .s_req(s_rdma_sq),
     .m_req(rdma_sq),
     .s_ack(rdma_ack),
-    .m_ack(m_rdma_ack)
+    .m_ack(m_rdma_ack),
+    .s_qp_rst(qp_rst)
 );
 
 ///////////////////////////////////////////////////////////////////////////

@@ -33,6 +33,9 @@ module rdma_flow (
     metaIntf.s                  s_ack,
     metaIntf.m                  m_ack,
 
+    // QPN of a QP set up again: its slots restart empty
+    metaIntf.s                  s_qp_rst,
+
     input  logic                aclk,
     input  logic                aresetn
 );
@@ -43,7 +46,7 @@ localparam integer RD_OP = 0;
 localparam integer WR_OP = 1;
 
 // -- FSM
-typedef enum logic[2:0]  {ST_IDLE, ST_ACK_LUP_WAIT, ST_REQ_LUP_WAIT, ST_ACK_LUP, ST_REQ_LUP} state_t;
+typedef enum logic[2:0]  {ST_IDLE, ST_ACK_LUP_WAIT, ST_REQ_LUP_WAIT, ST_ACK_LUP, ST_REQ_LUP, ST_RST_WR, ST_RST_RD} state_t;
 logic [2:0] state_C, state_N;
 logic [1+N_REGIONS_BITS+PID_BITS-1:0] addr_C, addr_N;
 
@@ -92,7 +95,7 @@ always_comb begin: NSL
 
 	case(state_C)
 		ST_IDLE: 
-			state_N = (s_ack.valid) ? ST_ACK_LUP_WAIT : (s_req.valid & req_out.ready ? ST_REQ_LUP_WAIT : ST_IDLE);
+			state_N = s_qp_rst.valid ? ST_RST_WR : ((s_ack.valid) ? ST_ACK_LUP_WAIT : (s_req.valid & req_out.ready ? ST_REQ_LUP_WAIT : ST_IDLE));
 
         ST_ACK_LUP_WAIT:
             state_N = ST_ACK_LUP;
@@ -104,6 +107,12 @@ always_comb begin: NSL
             state_N = ST_IDLE;
 
         ST_ACK_LUP:
+            state_N = ST_IDLE;
+
+        ST_RST_WR:
+            state_N = ST_RST_RD;
+
+        ST_RST_RD:
             state_N = ST_IDLE;
 
 	endcase // state_C
@@ -130,6 +139,9 @@ always_comb begin: DP
     req_out.data = s_req.data;
     req_out.data.req_1.offs = head;
 
+    // QP reset
+    s_qp_rst.ready = 1'b0;
+
     // Table
     ssn_wr = 0;
     ssn_addr = addr_C;
@@ -141,7 +153,10 @@ always_comb begin: DP
 
     case(state_C)
         ST_IDLE: begin
-            if(s_ack.valid) begin
+            if(s_qp_rst.valid) begin
+                // Goes to ST_RST_WR and ST_RST_RD
+            end
+            else if(s_ack.valid) begin
                 s_ack.ready = 1'b1;
                 ack_que_in.valid = s_ack.data.last;
 
@@ -152,6 +167,19 @@ always_comb begin: DP
                 ssn_addr = {is_opcode_rd_req(s_req.data.req_1.opcode), s_req.data.req_1.vfid[N_REGIONS_BITS-1:0], s_req.data.req_1.pid};
                 addr_N = ssn_addr;
             end
+        end
+
+        // A QP set up again: empty its WRITE and READ rings. Requests a previous session never saw
+        // acknowledged would otherwise keep their slots, and the ring would fill for good.
+        ST_RST_WR: begin
+            ssn_wr = ~0;
+            ssn_addr = {1'b0, s_qp_rst.data[PID_BITS+:N_REGIONS_BITS], s_qp_rst.data[0+:PID_BITS]};
+        end
+
+        ST_RST_RD: begin
+            ssn_wr = ~0;
+            ssn_addr = {1'b1, s_qp_rst.data[PID_BITS+:N_REGIONS_BITS], s_qp_rst.data[0+:PID_BITS]};
+            s_qp_rst.ready = 1'b1;
         end
 
         ST_ACK_LUP: begin
