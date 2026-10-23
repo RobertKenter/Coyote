@@ -57,6 +57,19 @@ module cyt_top (
     (* io_buffer_type = "none" *) output  wire[3:0]           gt1_txp_out,
     (* io_buffer_type = "none" *) output  wire[3:0]           gt1_txn_out,
 {% endif %}
+{% if cnfg.fdev == 'v80' and cnfg.n_net_ports > 2 %}
+    // GT 2, 3: the other DCMAC's two ports (GTM banks 111 and 112), on their own reference clock
+    (* io_buffer_type = "none" *) input  wire[3:0]            gt2_rxp_in,
+    (* io_buffer_type = "none" *) input  wire[3:0]            gt2_rxn_in,
+    (* io_buffer_type = "none" *) output  wire[3:0]           gt2_txp_out,
+    (* io_buffer_type = "none" *) output  wire[3:0]           gt2_txn_out,
+    (* io_buffer_type = "none" *) input  wire[3:0]            gt3_rxp_in,
+    (* io_buffer_type = "none" *) input  wire[3:0]            gt3_rxn_in,
+    (* io_buffer_type = "none" *) output  wire[3:0]           gt3_txp_out,
+    (* io_buffer_type = "none" *) output  wire[3:0]           gt3_txn_out,
+    (* io_buffer_type = "none" *) input  wire                 gt2_refclk_p,
+    (* io_buffer_type = "none" *) input  wire                 gt2_refclk_n,
+{% endif %}
 {% if (cnfg.fdev != 'u50d') and (cnfg.fdev != 'v80') %}  
     // GT 1
     (* io_buffer_type = "none" *) input  wire[3:0]            gt1_rxp_in,
@@ -523,6 +536,18 @@ module cyt_top (
         .gt1_rxn_in(gt1_rxn_in),
         .gt1_txp_out(gt1_txp_out),
         .gt1_txn_out(gt1_txn_out),
+    {% endif %}
+    {% if cnfg.fdev == 'v80' and cnfg.n_net_ports > 2 %}
+        .gt2_rxp_in(gt2_rxp_in),
+        .gt2_rxn_in(gt2_rxn_in),
+        .gt2_txp_out(gt2_txp_out),
+        .gt2_txn_out(gt2_txn_out),
+        .gt3_rxp_in(gt3_rxp_in),
+        .gt3_rxn_in(gt3_rxn_in),
+        .gt3_txp_out(gt3_txp_out),
+        .gt3_txn_out(gt3_txn_out),
+        .gt2_refclk_p(gt2_refclk_p),
+        .gt2_refclk_n(gt2_refclk_n),
     {% endif %}
     {% if (cnfg.fdev != 'u50d') and (cnfg.fdev != 'v80') %}  
         .gt1_rxp_in(gt1_rxp_in),

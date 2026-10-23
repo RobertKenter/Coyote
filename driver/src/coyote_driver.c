@@ -49,6 +49,27 @@ static int n_mac_addrs_p1 = 0;
 module_param_array(mac_addr_p1, charp, &n_mac_addrs_p1, 0000);
 MODULE_PARM_DESC(mac_addr_p1, "Second network port's MAC addresses (hex), one per device; default: port 0's + 1");
 
+/// The third and fourth ports' (shells with four ports); by default port 0's + 2 and + 3
+char *ip_addr_p2[MAX_FPGA_DEVICES] = {NULL, NULL, NULL, NULL};
+static int n_ip_addrs_p2 = 0;
+module_param_array(ip_addr_p2, charp, &n_ip_addrs_p2, 0000);
+MODULE_PARM_DESC(ip_addr_p2, "Third network port's IP addresses (hex), one per device; default: port 0's + 2");
+
+char *mac_addr_p2[MAX_FPGA_DEVICES] = {NULL, NULL, NULL, NULL};
+static int n_mac_addrs_p2 = 0;
+module_param_array(mac_addr_p2, charp, &n_mac_addrs_p2, 0000);
+MODULE_PARM_DESC(mac_addr_p2, "Third network port's MAC addresses (hex), one per device; default: port 0's + 2");
+
+char *ip_addr_p3[MAX_FPGA_DEVICES] = {NULL, NULL, NULL, NULL};
+static int n_ip_addrs_p3 = 0;
+module_param_array(ip_addr_p3, charp, &n_ip_addrs_p3, 0000);
+MODULE_PARM_DESC(ip_addr_p3, "Fourth network port's IP addresses (hex), one per device; default: port 0's + 3");
+
+char *mac_addr_p3[MAX_FPGA_DEVICES] = {NULL, NULL, NULL, NULL};
+static int n_mac_addrs_p3 = 0;
+module_param_array(mac_addr_p3, charp, &n_mac_addrs_p3, 0000);
+MODULE_PARM_DESC(mac_addr_p3, "Fourth network port's MAC addresses (hex), one per device; default: port 0's + 3");
+
 /// End-of-start-up time (in clock cycles); after which reconfiguration is assumed completed
 /// Primarily needed on the U55C, which has no mechanism to detect when the bitstream has been loaded
 long int eost = 1000000;

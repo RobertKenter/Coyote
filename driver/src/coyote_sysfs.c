@@ -27,8 +27,11 @@ ssize_t cyt_attr_ip_show(struct kobject *kobj, struct kobj_attribute *attr, char
 
     dbg_info("coyote-sysfs:  current IP address: 0x%08x, port: %d\n", bus_data->net_ip_addr, bus_data->qsfp);
     if (bus_data->n_net_ports > 1) {
-        return sprintf(buff, "IP address: %08x, port: 0\nIP address: %08x, port: 1\n",
-                       bus_data->net_ip_addr, bus_data->net_ip_addr_p1);
+        int sw = 0;
+        for (int p = 0; p < bus_data->n_net_ports; p++) {
+            sw += sprintf(buff + sw, "IP address: %08x, port: %d\n", cyt_net_ip(bus_data, p), p);
+        }
+        return sw;
     }
     return sprintf(buff, "IP address: %08x, port: %d\n", bus_data->net_ip_addr, bus_data->qsfp);
 }
@@ -52,13 +55,7 @@ ssize_t cyt_attr_ip_store(struct kobject *kobj, struct kobj_attribute *attr, con
     }
 
     dbg_info("coyote-sysfs:  setting IP address to: %08x, port %d\n", ip, port);
-    if (port == 0) {
-        bus_data->net_ip_addr = ip;
-        bus_data->shell_cnfg->net_ip = ip;
-    } else {
-        bus_data->net_ip_addr_p1 = ip;
-        bus_data->shell_cnfg->net1_ip = ip;
-    }
+    cyt_set_net_ip(bus_data, port, ip);
 
     return count;
 }
@@ -69,8 +66,11 @@ ssize_t cyt_attr_mac_show(struct kobject *kobj, struct kobj_attribute *attr, cha
 
     dbg_info("coyote-sysfs:  current MAC address: 0x%012llx, port: %d\n", bus_data->net_mac_addr, bus_data->qsfp);
     if (bus_data->n_net_ports > 1) {
-        return sprintf(buff, "MAC address: %012llx, port: 0\nMAC address: %012llx, port: 1\n",
-                       bus_data->net_mac_addr, bus_data->net_mac_addr_p1);
+        int sw = 0;
+        for (int p = 0; p < bus_data->n_net_ports; p++) {
+            sw += sprintf(buff + sw, "MAC address: %012llx, port: %d\n", cyt_net_mac(bus_data, p), p);
+        }
+        return sw;
     }
     return sprintf(buff, "MAC address: %012llx, port: %d\n", bus_data->net_mac_addr, bus_data->qsfp);
 }
@@ -94,13 +94,7 @@ ssize_t cyt_attr_mac_store(struct kobject *kobj, struct kobj_attribute *attr, co
     }
 
     dbg_info("coyote-sysfs:  setting MAC address to: %012llx, port: %d\n", mac, port);
-    if (port == 0) {
-        bus_data->net_mac_addr = mac;
-        bus_data->shell_cnfg->net_mac = mac;
-    } else {
-        bus_data->net_mac_addr_p1 = mac;
-        bus_data->shell_cnfg->net1_mac = mac;
-    }
+    cyt_set_net_mac(bus_data, port, mac);
 
     return count;
 }
@@ -162,16 +156,17 @@ static int nstats_port(char *buff, int port, uint64_t *net_debug) {
     );
 }
 
-// shell_slave DCMAC_STATUS_REG: dcmac_reset_ctrl's status (state 14 is the end of the sequence)
-// and each GT quad's reset-done and power good
-static int dcmac_status(char *buff, uint64_t v) {
-    return sprintf(buff, " -- \033[31m\e[1mDCMAC\033[0m\e[0m\n\n"
+// shell_slave DCMAC_STATUS_REG (DCMAC1_STATUS_REG for the second): dcmac_reset_ctrl's status (state
+// 14 is the end of the sequence) and each GT quad's reset-done and power good
+static int dcmac_status(char *buff, int dcmac, uint64_t v) {
+    return sprintf(buff, " -- \033[31m\e[1mDCMAC %d\033[0m\e[0m (ports %d, %d)\n\n"
         "Status: 0x%08llx\n"
         "Reset state: %lld (14: done), sequences: %lld, GT reset: %lld\n"
         "GT reset done TX/RX: now %lld/%lld, seen %lld/%lld, lost since %lld/%lld, wait timed out: %lld\n"
         "Core reset TX/RX: %lld/%lld, datapath reset released: %lld\n"
         "Quad 0 TX/RX done, power good: %lld/%lld %lld\n"
         "Quad 1 TX/RX done, power good: %lld/%lld %lld\n\n",
+        dcmac, 2 * dcmac, 2 * dcmac + 1,
         v, v & 0x1f, (v >> 16) & 0xff, (v >> 5) & 1,
         (v >> 8) & 1, (v >> 9) & 1, (v >> 6) & 1, (v >> 7) & 1, (v >> 13) & 1, (v >> 14) & 1, (v >> 15) & 1,
         (v >> 11) & 1, (v >> 12) & 1, (v >> 10) & 1,
@@ -179,25 +174,27 @@ static int dcmac_status(char *buff, uint64_t v) {
         (v >> 27) & 1, (v >> 28) & 1, (v >> 29) & 1);
 }
 
-// One block per network port; with several, the second one's (QSFP1) follows, then the DCMAC's
+// One block per network port (QSFP0, QSFP1, ...), then with several ports each DCMAC's
 ssize_t cyt_attr_nstats_show(struct kobject *kobj, struct kobj_attribute *attr, char *buff) {
     struct bus_driver_data *bus_data = container_of(kobj, struct bus_driver_data, cyt_kobj);
     BUG_ON(!bus_data);
 
     uint64_t net_debug[N_NET_STAT_REGS];
-    int sw;
+    int sw = 0;
 
-    for (int i = 0; i < N_NET_STAT_REGS; i++) {
-        net_debug[i] = bus_data->shell_cnfg->net_debug[i];
+    for (int p = 0; p < bus_data->n_net_ports; p++) {
+        volatile uint64_t *regs = cyt_net_debug(bus_data, p);
+        for (int i = 0; i < N_NET_STAT_REGS; i++) {
+            net_debug[i] = regs[i];
+        }
+        sw += nstats_port(buff + sw, bus_data->n_net_ports > 1 ? p : bus_data->qsfp, net_debug);
     }
-    sw = nstats_port(buff, bus_data->n_net_ports > 1 ? 0 : bus_data->qsfp, net_debug);
 
     if (bus_data->n_net_ports > 1) {
-        for (int i = 0; i < N_NET_STAT_REGS; i++) {
-            net_debug[i] = bus_data->shell_cnfg->net1_debug[i];
-        }
-        sw += nstats_port(buff + sw, 1, net_debug);
-        sw += dcmac_status(buff + sw, bus_data->shell_cnfg->dcmac_status);
+        sw += dcmac_status(buff + sw, 0, bus_data->shell_cnfg->dcmac_status);
+    }
+    if (bus_data->n_net_ports > 2) {
+        sw += dcmac_status(buff + sw, 1, bus_data->shell_cnfg->dcmac1_status);
     }
     return sw;
 }

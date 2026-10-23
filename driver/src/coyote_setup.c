@@ -142,18 +142,21 @@ int read_shell_config(struct bus_driver_data *data) {
         data->shell_cnfg->net_mac = data->net_mac_addr;
         dbg_info("set network ip %08x, mac %012llx (device %d)\n", data->net_ip_addr, data->net_mac_addr, data->dev_id);
 
-        if (data->n_net_ports > 1) {
-            data->net_ip_addr_p1 = data->net_ip_addr + 1;
-            data->net_mac_addr_p1 = data->net_mac_addr + 1;
-            if (ip_addr_p1[data->dev_id] && kstrtol(ip_addr_p1[data->dev_id], 16, &tmp) == 0) {
-                data->net_ip_addr_p1 = (uint32_t) tmp;
+        // The other ports: their module parameters, by default port 0's addresses + the port
+        char **port_ip[MAX_NET_PORTS] = {NULL, ip_addr_p1, ip_addr_p2, ip_addr_p3};
+        char **port_mac[MAX_NET_PORTS] = {NULL, mac_addr_p1, mac_addr_p2, mac_addr_p3};
+        for (int p = 1; p < data->n_net_ports; p++) {
+            uint32_t ip = data->net_ip_addr + p;
+            uint64_t mac = data->net_mac_addr + p;
+            if (port_ip[p][data->dev_id] && kstrtol(port_ip[p][data->dev_id], 16, &tmp) == 0) {
+                ip = (uint32_t) tmp;
             }
-            if (mac_addr_p1[data->dev_id] && kstrtol(mac_addr_p1[data->dev_id], 16, &tmp) == 0) {
-                data->net_mac_addr_p1 = (uint64_t) tmp;
+            if (port_mac[p][data->dev_id] && kstrtol(port_mac[p][data->dev_id], 16, &tmp) == 0) {
+                mac = (uint64_t) tmp;
             }
-            data->shell_cnfg->net1_ip = data->net_ip_addr_p1;
-            data->shell_cnfg->net1_mac = data->net_mac_addr_p1;
-            dbg_info("set network port 1 ip %08x, mac %012llx (device %d)\n", data->net_ip_addr_p1, data->net_mac_addr_p1, data->dev_id);
+            cyt_set_net_ip(data, p, ip);
+            cyt_set_net_mac(data, p, mac);
+            dbg_info("set network port %d ip %08x, mac %012llx (device %d)\n", p, ip, mac, data->dev_id);
         }
     }
 

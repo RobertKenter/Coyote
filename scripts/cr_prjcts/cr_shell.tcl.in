@@ -189,6 +189,9 @@ if {$cfg(fpga_arch) eq "versal" && $cfg(en_net) eq 1} {
         cr_bd_dcmac ""
         if {$cfg(n_net_ports) > 1} {
             set_property SYNTH_CHECKPOINT_MODE "Hierarchical" [get_files dcmac_versal_axis_ports.bd ]
+            if {$cfg(n_net_ports) > 2} {
+                set_property SYNTH_CHECKPOINT_MODE "Hierarchical" [get_files dcmac_versal_axis_ports_1.bd ]
+            }
         } else {
             set_property SYNTH_CHECKPOINT_MODE "Hierarchical" [get_files dcmac_versal_axis_wrapper.bd ]
         }

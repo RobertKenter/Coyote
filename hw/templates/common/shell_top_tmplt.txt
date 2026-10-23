@@ -146,6 +146,20 @@ module shell_top (
     (* io_buffer_type = "none" *) output  logic[3:0]                        gt1_txn_out,
 
     {% endif %}
+    {% if cnfg.fdev == 'v80' and cnfg.n_net_ports > 2 %}
+    // GT 2, 3: the other DCMAC's two ports, on their own reference clock
+    (* io_buffer_type = "none" *) input  logic[3:0]                         gt2_rxp_in,
+    (* io_buffer_type = "none" *) input  logic[3:0]                         gt2_rxn_in,
+    (* io_buffer_type = "none" *) output  logic[3:0]                        gt2_txp_out,
+    (* io_buffer_type = "none" *) output  logic[3:0]                        gt2_txn_out,
+    (* io_buffer_type = "none" *) input  logic[3:0]                         gt3_rxp_in,
+    (* io_buffer_type = "none" *) input  logic[3:0]                         gt3_rxn_in,
+    (* io_buffer_type = "none" *) output  logic[3:0]                        gt3_txp_out,
+    (* io_buffer_type = "none" *) output  logic[3:0]                        gt3_txn_out,
+    (* io_buffer_type = "none" *) input  logic                              gt2_refclk_p,
+    (* io_buffer_type = "none" *) input  logic                              gt2_refclk_n,
+
+    {% endif %}
     {% if (cnfg.fdev != 'u50d') and (cnfg.fdev != 'v80') %}  
     // GT 1     
     (* io_buffer_type = "none" *) input  logic[3:0]                         gt1_rxp_in,
@@ -696,8 +710,8 @@ module shell_top (
     // RDMA memory offset, shared (RDMA only with several ports)
     logic [63:0] ddr_offset_addr_rdma;
 
-    // DCMAC reset sequence and GT status
-    logic [31:0] dcmac_status;
+    // DCMAC reset sequence and GT status, one word per DCMAC
+    logic [N_NET_PORTS/2-1:0][31:0] dcmac_status;
 {% elif cnfg.en_net %}
     // Network
     metaIntf #(.STYPE(logic[ARP_LUP_REQ_BITS-1:0])) arp_lookup_request();
@@ -839,7 +853,52 @@ module shell_top (
     metaIntf #(.STYPE(logic[64-1:0])) filter_config ();
 {% endif %}
     
-{% if cnfg.n_net_ports > 1 %}
+{% if cnfg.n_net_ports > 2 %}
+    // Two DCMACs, two ports each; a stack per port, each serving the vFPGA of the same index.
+    // The DCMACs take interface arrays of two, so each gets its own, joined to the ports' here.
+{% for d in range(2) %}
+{% if cnfg.en_nclk %}
+    AXI4S #(.AXI4S_DATA_BITS(AXI_NET_BITS)) axis_dcmac{{ d }}_rx [2] (.aclk(nclk), .aresetn(nresetn));
+    AXI4S #(.AXI4S_DATA_BITS(AXI_NET_BITS)) axis_dcmac{{ d }}_tx [2] (.aclk(nclk), .aresetn(nresetn));
+{% else %}
+    AXI4S #(.AXI4S_DATA_BITS(AXI_NET_BITS)) axis_dcmac{{ d }}_rx [2] (.aclk(aclk), .aresetn(aresetn));
+    AXI4S #(.AXI4S_DATA_BITS(AXI_NET_BITS)) axis_dcmac{{ d }}_tx [2] (.aclk(aclk), .aresetn(aresetn));
+{% endif %}
+{% endfor %}
+
+{% for d in range(2) %}
+    network_dcmac_ports #(.DCMAC({{ d }})) inst_network_dcmac_{{ d }} (
+{% if cnfg.en_nclk %}
+        .aclk(nclk),
+        .aresetn(nresetn),
+{% else %}
+        .aclk(aclk),
+        .aresetn(aresetn),
+{% endif %}
+        .gt_refclk_p(gt{{ 2 * d }}_refclk_p),
+        .gt_refclk_n(gt{{ 2 * d }}_refclk_n),
+        .gt0_rxp_in(gt{{ 2 * d }}_rxp_in),
+        .gt0_rxn_in(gt{{ 2 * d }}_rxn_in),
+        .gt0_txp_out(gt{{ 2 * d }}_txp_out),
+        .gt0_txn_out(gt{{ 2 * d }}_txn_out),
+        .gt1_rxp_in(gt{{ 2 * d + 1 }}_rxp_in),
+        .gt1_rxn_in(gt{{ 2 * d + 1 }}_rxn_in),
+        .gt1_txp_out(gt{{ 2 * d + 1 }}_txp_out),
+        .gt1_txn_out(gt{{ 2 * d + 1 }}_txn_out),
+        .m_axis_net_rx(axis_dcmac{{ d }}_rx),
+        .s_axis_net_tx(axis_dcmac{{ d }}_tx),
+        .m_status(dcmac_status[{{ d }}])
+    );
+
+{% endfor %}
+    for(genvar p = 0; p < 2; p++) begin : g_dcmac_port
+        `AXIS_ASSIGN(axis_dcmac0_rx[p], axis_mac_rx[p])
+        `AXIS_ASSIGN(axis_mac_tx[p], axis_dcmac0_tx[p])
+        `AXIS_ASSIGN(axis_dcmac1_rx[p], axis_mac_rx[2 + p])
+        `AXIS_ASSIGN(axis_mac_tx[2 + p], axis_dcmac1_tx[p])
+    end
+
+{% elif cnfg.n_net_ports > 1 %}
     // One DCMAC, two ports; a stack per port, each serving the vFPGA of the same index
     network_dcmac_ports inst_network_dcmac (
 {% if cnfg.en_nclk %}
@@ -863,6 +922,8 @@ module shell_top (
         .s_axis_net_tx(axis_mac_tx),
         .m_status(dcmac_status)
     );
+{% endif %}
+{% if cnfg.n_net_ports > 1 %}
 
     for(genvar p = 0; p < N_NET_PORTS; p++) begin : g_net_port
         network_top #(

@@ -68,8 +68,8 @@ module shell_slave (
 `endif 
 
 `ifdef NET_PER_REGION
-  // DCMAC reset sequence and GT status (network_dcmac_ports), any clock domain
-  input  logic [31:0]       s_dcmac_status,
+  // DCMAC reset sequence and GT status (network_dcmac_ports), one word per DCMAC, any clock domain
+  input  logic [N_NET_PORTS/2-1:0][31:0] s_dcmac_status,
 `endif
 
   // Control bus (HOST)
@@ -148,6 +148,13 @@ localparam integer NET1_IPADDR_REG        = 36;
 localparam integer NET1_MACADDR_REG       = 37;
 // 38 (RO) : DCMAC reset sequence and GT status (N_NET_PORTS > 1; see network_dcmac_ports)
 localparam integer DCMAC_STATUS_REG       = 38;
+// 39, 40 and 41, 42 (W) : third and fourth network ports' IP and MAC address (N_NET_PORTS = 4)
+// 43 (RO) : the second DCMAC's status, ports 2 and 3 (N_NET_PORTS = 4)
+localparam integer DCMAC1_STATUS_REG      = 43;
+// Per port, in port order
+localparam logic [3:0][7:0] NET_IPADDR_REGS  = {8'd41, 8'd39, 8'(NET1_IPADDR_REG), 8'd32};
+localparam logic [3:0][7:0] NET_MACADDR_REGS = {8'd42, 8'd40, 8'(NET1_MACADDR_REG), 8'd33};
+localparam logic [1:0][7:0] DCMAC_STATUS_REGS = {8'(DCMAC1_STATUS_REG), 8'(DCMAC_STATUS_REG)};
 
 // Host DMA (XDMA/QDMA) STATS
 localparam integer HDMA_STAT_0_BPSS       = 64;
@@ -169,6 +176,25 @@ localparam integer NET_STAT_SESS_REG      = 103;
 localparam integer NET_STAT_DOWN_REG      = 104;
 // 112 - 120 (RO) : the second network port's, in the same order (N_NET_PORTS > 1)
 localparam integer NET1_STAT_OFFS         = 16;
+// 76 - 84, 86 - 94 (RO) : the third and fourth ports', in the same order (N_NET_PORTS = 4)
+localparam integer N_NET_STAT_REGS        = NET_STAT_DOWN_REG - NET_STAT_PKG_REG + 1;
+localparam logic [3:0][7:0] NET_STAT_REGS = {8'd86, 8'd76, 8'(NET_STAT_PKG_REG + NET1_STAT_OFFS), 8'(NET_STAT_PKG_REG)};
+
+// A port's statistics register, by its index from NET_STAT_PKG_REG
+function automatic logic [63:0] net_stat_reg(input net_stat_t s, input integer i);
+    case (i)
+        0: return {s.tx_pkg_counter, s.rx_pkg_counter};
+        1: return {s.arp_tx_pkg_counter, s.arp_rx_pkg_counter};
+        2: return {s.icmp_tx_pkg_counter, s.icmp_rx_pkg_counter};
+        3: return {s.tcp_tx_pkg_counter, s.tcp_rx_pkg_counter};
+        4: return {s.roce_tx_pkg_counter, s.roce_rx_pkg_counter};
+        5: return {s.ibv_tx_pkg_counter, s.ibv_rx_pkg_counter};
+        6: return {s.roce_retrans_counter, s.roce_psn_drop_counter};
+        7: return 64'(s.tcp_session_counter);
+        8: return 64'(s.axis_stream_down);
+        default: return 0;
+    endcase
+endfunction
 
 `ifdef NET_PER_REGION
 // Per-port IP and MAC updates; interface array elements take constant indices only
@@ -188,7 +214,7 @@ end
 
 `ifdef NET_PER_REGION
 // The DCMAC status comes from the DCMAC's and the GTs' clocks; bits are quasi-static
-(* ASYNC_REG = "TRUE" *) logic [31:0] dcmac_status_s0, dcmac_status_s1;
+(* ASYNC_REG = "TRUE" *) logic [N_NET_PORTS/2-1:0][31:0] dcmac_status_s0, dcmac_status_s1;
 always_ff @(posedge aclk) begin
     dcmac_status_s0 <= s_dcmac_status;
     dcmac_status_s1 <= dcmac_status_s0;
@@ -200,11 +226,9 @@ end
 `ifdef NET_PER_REGION
 // Registered here: the ports' counters come from stacks in different SLRs, and the read mux
 // would otherwise stretch between them
-net_stat_t net_stats_0;
-net_stat_t net_stats_1;
+net_stat_t [N_NET_PORTS-1:0] net_stats;
 always_ff @(posedge aclk) begin
-    net_stats_0 <= s_net_stats[0];
-    net_stats_1 <= s_net_stats[1];
+    net_stats <= s_net_stats;
 end
 `elsif EN_NET
 net_stat_t net_stats_0;
@@ -265,20 +289,7 @@ always_ff @(posedge aclk) begin
           end
 
 `ifdef NET_PER_REGION
-        NET_IPADDR_REG, NET1_IPADDR_REG: // IP address, per port
-          for (int i = 0; i < 4; i++) begin
-            if(s_axi_ctrl.wstrb[i]) begin
-              set_ip_data[axi_awaddr[ADDR_LSB+:ADDR_MSB] == NET1_IPADDR_REG][(i*8)+:8] <= s_axi_ctrl.wdata[(i*8)+:8];
-              set_ip_valid[axi_awaddr[ADDR_LSB+:ADDR_MSB] == NET1_IPADDR_REG] <= 1'b1;
-            end
-          end
-        NET_MACADDR_REG, NET1_MACADDR_REG: // MAC address, per port
-          for (int i = 0; i < MAC_ADDR_BITS/8; i++) begin
-            if(s_axi_ctrl.wstrb[i]) begin
-              set_mac_data[axi_awaddr[ADDR_LSB+:ADDR_MSB] == NET1_MACADDR_REG][(i*8)+:8] <= s_axi_ctrl.wdata[(i*8)+:8];
-              set_mac_valid[axi_awaddr[ADDR_LSB+:ADDR_MSB] == NET1_MACADDR_REG] <= 1'b1;
-            end
-          end
+        // IP and MAC addresses, per port: after the case
 `elsif EN_NET
         NET_IPADDR_REG: // IP address
           for (int i = 0; i < 4; i++) begin
@@ -316,6 +327,27 @@ always_ff @(posedge aclk) begin
 
         default : ;
       endcase
+
+`ifdef NET_PER_REGION
+      for (int p = 0; p < N_NET_PORTS; p++) begin
+        if (axi_awaddr[ADDR_LSB+:ADDR_MSB] == NET_IPADDR_REGS[p]) begin // IP address
+          for (int i = 0; i < 4; i++) begin
+            if(s_axi_ctrl.wstrb[i]) begin
+              set_ip_data[p][(i*8)+:8] <= s_axi_ctrl.wdata[(i*8)+:8];
+              set_ip_valid[p] <= 1'b1;
+            end
+          end
+        end
+        if (axi_awaddr[ADDR_LSB+:ADDR_MSB] == NET_MACADDR_REGS[p]) begin // MAC address
+          for (int i = 0; i < MAC_ADDR_BITS/8; i++) begin
+            if(s_axi_ctrl.wstrb[i]) begin
+              set_mac_data[p][(i*8)+:8] <= s_axi_ctrl.wdata[(i*8)+:8];
+              set_mac_valid[p] <= 1'b1;
+            end
+          end
+        end
+      end
+`endif
     end
   end
 end    
@@ -379,8 +411,7 @@ always_ff @(posedge aclk) begin
 `endif
 
 `ifdef NET_PER_REGION
-        DCMAC_STATUS_REG: // DCMAC reset sequence and GT status
-          axi_rdata[31:0] <= dcmac_status_s1;
+        // DCMAC status and network statistics, per DCMAC and port: after the case
 `endif
 
 `ifdef EN_TCP
@@ -408,7 +439,8 @@ always_ff @(posedge aclk) begin
             axi_rdata <= {s_hdma_stats_1.bpss_c2h_axis_counter, s_hdma_stats_1.bpss_h2c_axis_counter};
   `endif
 
-  `ifdef EN_NET
+  `ifdef NET_PER_REGION
+  `elsif EN_NET
           NET_STAT_PKG_REG: // rx and tx
             axi_rdata <= {net_stats_0.tx_pkg_counter, net_stats_0.rx_pkg_counter};
           NET_STAT_ARP_REG: // arp
@@ -428,31 +460,26 @@ always_ff @(posedge aclk) begin
           NET_STAT_DOWN_REG: // rdma
             axi_rdata[0] <= net_stats_0.axis_stream_down;
   `endif
-  `ifdef NET_PER_REGION
-          NET_STAT_PKG_REG + NET1_STAT_OFFS: // rx and tx
-            axi_rdata <= {net_stats_1.tx_pkg_counter, net_stats_1.rx_pkg_counter};
-          NET_STAT_ARP_REG + NET1_STAT_OFFS: // arp
-            axi_rdata <= {net_stats_1.arp_tx_pkg_counter, net_stats_1.arp_rx_pkg_counter};
-          NET_STAT_ICMP_REG + NET1_STAT_OFFS: // icmp
-            axi_rdata <= {net_stats_1.icmp_tx_pkg_counter, net_stats_1.icmp_rx_pkg_counter};
-          NET_STAT_TCP_REG + NET1_STAT_OFFS: // tcp
-            axi_rdata <= {net_stats_1.tcp_tx_pkg_counter, net_stats_1.tcp_rx_pkg_counter};
-          NET_STAT_RDMA_REG + NET1_STAT_OFFS: // rdma
-            axi_rdata <= {net_stats_1.roce_tx_pkg_counter, net_stats_1.roce_rx_pkg_counter};
-          NET_STAT_IBV_REG + NET1_STAT_OFFS: // ibv
-            axi_rdata <= {net_stats_1.ibv_tx_pkg_counter, net_stats_1.ibv_rx_pkg_counter};
-          NET_STAT_DROP_REG + NET1_STAT_OFFS: // rdma drop
-            axi_rdata <= {net_stats_1.roce_retrans_counter, net_stats_1.roce_psn_drop_counter};
-          NET_STAT_SESS_REG + NET1_STAT_OFFS: // tcp sessions
-            axi_rdata[31:0] <= net_stats_1.tcp_session_counter;
-          NET_STAT_DOWN_REG + NET1_STAT_OFFS: // rdma
-            axi_rdata[0] <= net_stats_1.axis_stream_down;
-  `endif
 
 `endif
 
         default: ;
       endcase
+
+`ifdef NET_PER_REGION
+      for (int d = 0; d < N_NET_PORTS/2; d++) begin
+        if (axi_araddr[ADDR_LSB+:ADDR_MSB] == DCMAC_STATUS_REGS[d]) // DCMAC reset sequence and GT status
+          axi_rdata[31:0] <= dcmac_status_s1[d];
+      end
+  `ifdef EN_STATS
+      for (int p = 0; p < N_NET_PORTS; p++) begin
+        for (int i = 0; i < N_NET_STAT_REGS; i++) begin
+          if (axi_araddr[ADDR_LSB+:ADDR_MSB] == NET_STAT_REGS[p] + i)
+            axi_rdata <= net_stat_reg(net_stats[p], i);
+        end
+      end
+  `endif
+`endif
     end
   end 
 end

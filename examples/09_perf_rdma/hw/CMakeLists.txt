@@ -40,8 +40,8 @@ set(N_STRM_AXI 2)
 # Incldue Coyote's RDMA stack during synthesis
 set(EN_RDMA 1)
 
-# Number of vFPGAs (user applications); on the V80, PERF_PORTS=2 gives each vFPGA its own network
-# port, both running this example
+# Number of vFPGAs (user applications); on the V80, PERF_PORTS=2 or 4 gives each vFPGA its own
+# network port, all running this example
 if(NOT DEFINED PERF_PORTS)
     set(PERF_PORTS 1)
 endif()
@@ -59,10 +59,17 @@ if(PERF_PORTS EQUAL 1)
     load_apps (
         VFPGA_C0_0 "src"
     )
+elseif(PERF_PORTS EQUAL 2)
+    load_apps (
+        VFPGA_C0_0 "src"
+        VFPGA_C0_1 "src"
+    )
 else()
     load_apps (
         VFPGA_C0_0 "src"
         VFPGA_C0_1 "src"
+        VFPGA_C0_2 "src"
+        VFPGA_C0_3 "src"
     )
 endif()
 

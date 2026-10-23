@@ -155,8 +155,8 @@ set(EN_NET_0 1 CACHE STRING "QSFP port 0")
 set(EN_NET_1 0 CACHE STRING "QSFP port 1")
 
 # Network ports. Above 1, each vFPGA has a port of its own (vFPGA i on port i, so N_REGIONS must
-# equal it), each with its own stack, IP and MAC; RDMA only, and on the V80 up to the two ports
-# of the DCMAC that QSFP port 0 uses.
+# equal it), each with its own stack, IP and MAC; RDMA only. On the V80, 2 (the two ports of the
+# DCMAC that QSFP port 0 uses) or 4 (both DCMACs, all four cages).
 set(N_NET_PORTS 1 CACHE STRING "Network ports, one per vFPGA when above 1")
 
 # Make a shell reset (each driver load) wait for the GTs it resets before resetting the DCMAC
@@ -652,10 +652,10 @@ macro(validation_checks_hw)
             if(NOT FDEV_NAME STREQUAL "v80")
                 message(FATAL_ERROR "N_NET_PORTS above 1 is only supported on the V80.")
             endif()
-            if(N_NET_PORTS GREATER 2)
-                message(FATAL_ERROR "N_NET_PORTS: at most 2, the ports of the DCMAC that QSFP port 0 uses.")
+            if(NOT N_NET_PORTS EQUAL 2 AND NOT N_NET_PORTS EQUAL 4)
+                message(FATAL_ERROR "N_NET_PORTS: 2 (one DCMAC) or 4 (both DCMACs), two ports per DCMAC.")
             endif()
-            # Without it, the second port's link may not come up after a driver load
+            # Without it, a port's link may not come up after a driver load
             set(DCMAC_REWAIT 1)
             if(NOT N_REGIONS EQUAL N_NET_PORTS)
                 message(FATAL_ERROR "N_NET_PORTS above 1 gives each vFPGA its own port: set N_REGIONS=${N_NET_PORTS}.")

@@ -101,6 +101,10 @@ extern char *ip_addr[MAX_FPGA_DEVICES];
 extern char *mac_addr[MAX_FPGA_DEVICES];
 extern char *ip_addr_p1[MAX_FPGA_DEVICES];
 extern char *mac_addr_p1[MAX_FPGA_DEVICES];
+extern char *ip_addr_p2[MAX_FPGA_DEVICES];
+extern char *mac_addr_p2[MAX_FPGA_DEVICES];
+extern char *ip_addr_p3[MAX_FPGA_DEVICES];
+extern char *mac_addr_p3[MAX_FPGA_DEVICES];
 extern long int eost;
 extern bool en_hmm;
 
@@ -289,7 +293,7 @@ extern bool en_hmm;
 // Network ports: above 1, vFPGA i has port i (0 on shells that predate the field)
 #define N_NET_PORTS_MASK 0xf0
 #define N_NET_PORTS_SHIFT 0x4
-#define MAX_NET_PORTS 2
+#define MAX_NET_PORTS 4
 
 // Total size of vFPGFA control region and its offset
 #define VFPGA_CTRL_SIZE 256 * 1024
@@ -589,9 +593,15 @@ struct cyt_shell_cnfg_regs {
     uint64_t net1_ip;       // second network port (N_NET_PORTS > 1)
     uint64_t net1_mac;
     uint64_t dcmac_status;  // DCMAC reset sequence and GT status (N_NET_PORTS > 1)
-    uint64_t reserved_2[25];
+    uint64_t net2_ip;       // third and fourth network ports (N_NET_PORTS = 4)
+    uint64_t net2_mac;
+    uint64_t net3_ip;
+    uint64_t net3_mac;
+    uint64_t dcmac1_status; // the second DCMAC's, ports 2 and 3 (N_NET_PORTS = 4)
+    uint64_t reserved_2[20];
     uint64_t hdma_debug[N_HDMA_STAT_REGS];
-    uint64_t reserved_3[32 - N_HDMA_STAT_REGS];
+    uint64_t net2_debug[N_NET_STAT_REGS];   // registers 76 and 86: fill the 20 left after hdma_debug
+    uint64_t net3_debug[N_NET_STAT_REGS];
     uint64_t net_debug[N_NET_STAT_REGS];
     uint64_t reserved_4[16 - N_NET_STAT_REGS];
     uint64_t net1_debug[N_NET_STAT_REGS];
@@ -1234,8 +1244,8 @@ struct bus_driver_data {
     int n_net_ports;                        /* Network ports; above 1, vFPGA i has port i */
     uint32_t net_ip_addr;                   /* The FPGA's IP address */
     uint64_t net_mac_addr;                  /* The FPGA's MAC address */
-    uint32_t net_ip_addr_p1;                /* The second network port's IP address */
-    uint64_t net_mac_addr_p1;               /* The second network port's MAC address */
+    uint32_t net_ip_addr_p[MAX_NET_PORTS - 1];  /* Ports 1 and above: their IP addresses */
+    uint64_t net_mac_addr_p[MAX_NET_PORTS - 1]; /* Ports 1 and above: their MAC addresses */
     uint64_t eost;                          /* End of start-up time; see coyote_driver.c for details */
 
     /// Pointer to the static layer configuration registers; memory mapped during driver initialization
@@ -1295,6 +1305,50 @@ struct bus_driver_data {
     struct scenic_rdma_device *scenic_rdma_dev;
     #endif
 };
+
+/*
+ * Network port p's registers and addresses (p < n_net_ports). Port 0's are the shell's original
+ * ones; the others' are wherever the register map had room (see shell_slave.sv).
+ */
+static_assert(offsetof(struct cyt_shell_cnfg_regs, net_debug) == 96 * sizeof(uint64_t));
+static_assert(offsetof(struct cyt_shell_cnfg_regs, net2_debug) == 76 * sizeof(uint64_t));
+
+static inline volatile uint64_t *cyt_net_debug(struct bus_driver_data *d, int p) {
+    switch (p) {
+        case 0: return d->shell_cnfg->net_debug;
+        case 1: return d->shell_cnfg->net1_debug;
+        case 2: return d->shell_cnfg->net2_debug;
+        default: return d->shell_cnfg->net3_debug;
+    }
+}
+
+static inline uint32_t cyt_net_ip(struct bus_driver_data *d, int p) {
+    return p == 0 ? d->net_ip_addr : d->net_ip_addr_p[p - 1];
+}
+
+static inline uint64_t cyt_net_mac(struct bus_driver_data *d, int p) {
+    return p == 0 ? d->net_mac_addr : d->net_mac_addr_p[p - 1];
+}
+
+static inline void cyt_set_net_ip(struct bus_driver_data *d, int p, uint32_t ip) {
+    switch (p) {
+        case 0: d->shell_cnfg->net_ip = ip; d->net_ip_addr = ip; return;
+        case 1: d->shell_cnfg->net1_ip = ip; break;
+        case 2: d->shell_cnfg->net2_ip = ip; break;
+        default: d->shell_cnfg->net3_ip = ip; break;
+    }
+    d->net_ip_addr_p[p - 1] = ip;
+}
+
+static inline void cyt_set_net_mac(struct bus_driver_data *d, int p, uint64_t mac) {
+    switch (p) {
+        case 0: d->shell_cnfg->net_mac = mac; d->net_mac_addr = mac; return;
+        case 1: d->shell_cnfg->net1_mac = mac; break;
+        case 2: d->shell_cnfg->net2_mac = mac; break;
+        default: d->shell_cnfg->net3_mac = mac; break;
+    }
+    d->net_mac_addr_p[p - 1] = mac;
+}
 
 #ifdef EN_SCENIC
 

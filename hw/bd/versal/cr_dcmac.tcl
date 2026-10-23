@@ -453,7 +453,7 @@ proc create_hier_cell_datapath_tx { parentCell nameHier } {
 
 # Hierarchical cell: dcmac_wrapper
 # n_ports 2: the second 200GAUI-4 port (DCMAC port 2, channels 2-3, serdes lanes 4-7) as well
-proc create_hier_cell_dcmac_wrapper { parentCell nameHier {n_ports 1} } {
+proc create_hier_cell_dcmac_wrapper { parentCell nameHier {n_ports 1} {location DCMAC_X1Y1} } {
 
   variable script_folder
   global dcmac_vlnv
@@ -521,7 +521,7 @@ proc create_hier_cell_dcmac_wrapper { parentCell nameHier {n_ports 1} } {
   # Create instance: dcmac, and set properties
   set dcmac [ create_bd_cell -type ip -vlnv $dcmac_vlnv dcmac ]
   set_property -dict [list \
-    CONFIG.DCMAC_LOCATION_C0 {DCMAC_X1Y1} \
+    CONFIG.DCMAC_LOCATION_C0 $location \
     CONFIG.GT_REF_CLK_FREQ_C0 {322.265625} \
     CONFIG.IS_GT_WIZ_OLD {0} \
     CONFIG.MAC_PORT0_CONFIG_C0 {200GAUI-4} \
@@ -1197,7 +1197,12 @@ proc create_hier_cell_gt_wrapper { parentCell nameHier } {
 proc cr_bd_dcmac { parentCell } {
     upvar #0 cfg cnfg
     if {[info exists cnfg(n_net_ports)] && $cnfg(n_net_ports) > 1} {
-        return [cr_bd_dcmac_ports $parentCell]
+        # Two ports per DCMAC: the first DCMAC's block design, and with four ports the second's
+        set rc [cr_bd_dcmac_ports $parentCell 0]
+        if {$rc == 0 && $cnfg(n_net_ports) > 2} {
+            set rc [cr_bd_dcmac_ports $parentCell 1]
+        }
+        return $rc
     }
 
     # Set up block design
@@ -1330,14 +1335,16 @@ proc cr_bd_dcmac { parentCell } {
 }
 
 ################################################################
-# TOP-LEVEL, TWO PORTS
+# TOP-LEVEL, TWO PORTS PER DCMAC
 ################################################################
 # N_NET_PORTS = 2 on the V80: QSFP port 0's DCMAC runs a second 200GAUI-4 port on the partner cage.
 # Each port has its own GT quad (gt0: bank 209, gt1: bank 210) and datapaths; both quads use the one
-# reference clock (gt_clk, bank 209's).
-proc cr_bd_dcmac_ports { parentCell } {
+# reference clock (gt_clk, bank 209's). N_NET_PORTS = 4 adds the same block on the other DCMAC
+# (index 1: dcmac_versal_axis_ports_1 on DCMAC_X0Y2, the left-hand cages, banks 111 and 112, on
+# their own reference clock); only the DCMAC site differs, the quads follow the pins.
+proc cr_bd_dcmac_ports { parentCell {index 0} } {
     variable design_name
-    set design_name dcmac_versal_axis_ports
+    set design_name [expr {$index == 0 ? "dcmac_versal_axis_ports" : "dcmac_versal_axis_ports_1"}]
     create_bd_design $design_name
 
     upvar #0 cfg cnfg
@@ -1390,7 +1397,7 @@ proc cr_bd_dcmac_ports { parentCell } {
     # Instances
     create_hier_cell_gt_wrapper [current_bd_instance .] gt_wrapper_0
     create_hier_cell_gt_wrapper [current_bd_instance .] gt_wrapper_1
-    create_hier_cell_dcmac_wrapper [current_bd_instance .] dcmac_wrapper 2
+    create_hier_cell_dcmac_wrapper [current_bd_instance .] dcmac_wrapper 2 [expr {$index == 0 ? "DCMAC_X1Y1" : "DCMAC_X0Y2"}]
     for {set p 0} {$p < 2} {incr p} {
         create_hier_cell_datapath_tx [current_bd_instance .] datapath_tx_$p
         create_hier_cell_datapath_rx [current_bd_instance .] datapath_rx_$p
