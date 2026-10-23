@@ -99,6 +99,8 @@
 #define MAX_FPGA_DEVICES 4
 extern char *ip_addr[MAX_FPGA_DEVICES];
 extern char *mac_addr[MAX_FPGA_DEVICES];
+extern char *ip_addr_p1[MAX_FPGA_DEVICES];
+extern char *mac_addr_p1[MAX_FPGA_DEVICES];
 extern long int eost;
 extern bool en_hmm;
 
@@ -284,6 +286,10 @@ extern bool en_hmm;
 #define EN_TCP_SHIFT 0x0
 #define QSFP_MASK 0x2
 #define QSFP_SHIFT 0x1
+// Network ports: above 1, vFPGA i has port i (0 on shells that predate the field)
+#define N_NET_PORTS_MASK 0xf0
+#define N_NET_PORTS_SHIFT 0x4
+#define MAX_NET_PORTS 2
 
 // Total size of vFPGFA control region and its offset
 #define VFPGA_CTRL_SIZE 256 * 1024
@@ -580,11 +586,16 @@ struct cyt_shell_cnfg_regs {
     uint64_t net_mac; 
     uint64_t tcp_offs; 
     uint64_t rdma_offs; 
-    uint64_t reserved_2[28];
+    uint64_t net1_ip;       // second network port (N_NET_PORTS > 1)
+    uint64_t net1_mac;
+    uint64_t dcmac_status;  // DCMAC reset sequence and GT status (N_NET_PORTS > 1)
+    uint64_t reserved_2[25];
     uint64_t hdma_debug[N_HDMA_STAT_REGS];
     uint64_t reserved_3[32 - N_HDMA_STAT_REGS];
     uint64_t net_debug[N_NET_STAT_REGS];
-    uint64_t reserved_4[32 - N_NET_STAT_REGS];
+    uint64_t reserved_4[16 - N_NET_STAT_REGS];
+    uint64_t net1_debug[N_NET_STAT_REGS];
+    uint64_t reserved_5[16 - N_NET_STAT_REGS];
 } __packed;
 
 /**
@@ -1220,8 +1231,11 @@ struct bus_driver_data {
     int en_tcp;                             /* Shell is built with TCP/IP support */
     int en_net;                             /* True if either en_rdma or en_tcp is true */
     int qsfp;                               /* True if either en_rdma or en_tcp is true */
+    int n_net_ports;                        /* Network ports; above 1, vFPGA i has port i */
     uint32_t net_ip_addr;                   /* The FPGA's IP address */
     uint64_t net_mac_addr;                  /* The FPGA's MAC address */
+    uint32_t net_ip_addr_p1;                /* The second network port's IP address */
+    uint64_t net_mac_addr_p1;               /* The second network port's MAC address */
     uint64_t eost;                          /* End of start-up time; see coyote_driver.c for details */
 
     /// Pointer to the static layer configuration registers; memory mapped during driver initialization

@@ -99,6 +99,13 @@ module mmu_top #(
 `endif 
 `endif
 
+`ifdef NET_PER_REGION
+    // ARP and RDMA setup, per vFPGA: vFPGA i has network port i
+    metaIntf.m                          m_arp_lookup_request [N_REGIONS],
+    metaIntf.m                          m_rdma_qp_interface [N_REGIONS],
+    metaIntf.m                          m_rdma_conn_interface [N_REGIONS],
+    metaIntf.s                          s_rdma_cq [N_REGIONS],
+`else
 `ifdef EN_NET
     // ARP 
     metaIntf.m                          m_arp_lookup_request,
@@ -109,6 +116,7 @@ module mmu_top #(
     metaIntf.m                          m_rdma_qp_interface,
     metaIntf.m                          m_rdma_conn_interface,
     metaIntf.s                          s_rdma_cq,
+`endif
 `endif
 
 `ifdef EN_TCP
@@ -322,6 +330,27 @@ end
     mmu_arbiter_isr #(.RDWR(1)) inst_card_sync_arb    (.aclk(aclk), .aresetn(aresetn), .s_req(dma_sync),    .m_req_host(m_wr_HDMA_mig), .m_req_card(m_rd_CDMA_mig));
 `endif
 
+`ifdef NET_PER_REGION
+    // No sharing: each vFPGA's setup goes to its own port. A port's stack numbers its QPs by
+    // thread alone, so the vFPGA bits of the QP number are dropped here.
+    for(genvar i = 0; i < N_REGIONS; i++) begin
+        `META_ASSIGN(arp_lookup_request[i], m_arp_lookup_request[i])
+
+        assign m_rdma_qp_interface[i].valid = rdma_qp_interface[i].valid;
+        assign rdma_qp_interface[i].ready = m_rdma_qp_interface[i].ready;
+        always_comb begin
+            m_rdma_qp_interface[i].data = rdma_qp_interface[i].data;
+            m_rdma_qp_interface[i].data.qp_num = rdma_qp_interface[i].data.qp_num[PID_BITS-1:0];
+        end
+
+        assign m_rdma_conn_interface[i].valid = rdma_conn_interface[i].valid;
+        assign rdma_conn_interface[i].ready = m_rdma_conn_interface[i].ready;
+        always_comb begin
+            m_rdma_conn_interface[i].data = rdma_conn_interface[i].data;
+            m_rdma_conn_interface[i].data.local_qpn = rdma_conn_interface[i].data.local_qpn[PID_BITS-1:0];
+        end
+    end
+`else
 `ifdef EN_NET
     meta_arbiter #(.DATA_BITS(ARP_LUP_REQ_BITS)) inst_arp_arb (.aclk(aclk), .aresetn(aresetn), .s_meta(arp_lookup_request), .m_meta(m_arp_lookup_request));
 `endif
@@ -329,6 +358,7 @@ end
 `ifdef EN_RDMA
     meta_arbiter #(.DATA_BITS($bits(rdma_qp_ctx_t)))  inst_rdma_qp_arb   (.aclk(aclk), .aresetn(aresetn), .s_meta(rdma_qp_interface), .m_meta(m_rdma_qp_interface));
     meta_arbiter #(.DATA_BITS($bits(rdma_qp_conn_t))) inst_rdma_conn_arb (.aclk(aclk), .aresetn(aresetn), .s_meta(rdma_conn_interface), .m_meta(m_rdma_conn_interface));
+`endif
 `endif
 
 `ifdef EN_TCP

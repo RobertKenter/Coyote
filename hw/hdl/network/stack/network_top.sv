@@ -28,6 +28,8 @@
 
 import lynxTypes::*;
 
+`include "axi_macros.svh"
+
 /**
  * @brief   Network top
  *
@@ -43,6 +45,11 @@ module network_top #(
     // Network physical
     input  wire                 sys_reset,  
     input  wire                 init_clk,             
+`ifdef NET_PER_REGION
+    // One port of a MAC that several stacks share (network_dcmac_ports), on nclk
+    AXI4S.s                     s_axis_mac_rx,
+    AXI4S.m                     m_axis_mac_tx,
+`else
     input  wire                 gt_refclk_p,
     input  wire                 gt_refclk_n,
 
@@ -50,6 +57,7 @@ module network_top #(
     input  wire [3:0]           gt_rxn_in,            
     output wire [3:0]           gt_txp_out,
     output wire [3:0]           gt_txn_out,
+`endif
 
     // Init
     metaIntf.s                  s_arp_lookup_request,
@@ -162,7 +170,12 @@ AXI4S #(.AXI4S_DATA_BITS(AXI_NET_BITS)) axis_n_clk_rx_data (.aclk(n_clk), .arese
 AXI4S #(.AXI4S_DATA_BITS(AXI_NET_BITS)) axis_n_clk_tx_data (.aclk(n_clk), .aresetn(n_resetn));
 
 
-`ifdef NET_DCMAC
+`ifdef NET_PER_REGION
+
+`AXIS_ASSIGN(s_axis_mac_rx, axis_n_clk_rx_data)
+`AXIS_ASSIGN(axis_n_clk_tx_data, m_axis_mac_tx)
+
+`elsif NET_DCMAC
 
 network_module_dcmac inst_network_module (
     // Clock, reset

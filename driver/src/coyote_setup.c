@@ -109,7 +109,15 @@ int read_shell_config(struct bus_driver_data *data) {
 
     data->en_rdma = (data->shell_cnfg->rdma_cnfg & EN_RDMA_MASK) >> EN_RDMA_SHIFT;
     data->qsfp = (data->shell_cnfg->rdma_cnfg & QSFP_MASK) >> QSFP_SHIFT;
-    dbg_info("enabled RDMA %d, port %d\n", data->en_rdma, data->qsfp);
+    data->n_net_ports = (data->shell_cnfg->rdma_cnfg & N_NET_PORTS_MASK) >> N_NET_PORTS_SHIFT;
+    if (data->n_net_ports == 0) {
+        data->n_net_ports = 1;
+    }
+    if (data->n_net_ports > MAX_NET_PORTS) {
+        pr_warn("coyote: shell reports %d network ports, the driver handles %d\n", data->n_net_ports, MAX_NET_PORTS);
+        data->n_net_ports = MAX_NET_PORTS;
+    }
+    dbg_info("enabled RDMA %d, port %d, network ports %d\n", data->en_rdma, data->qsfp, data->n_net_ports);
 
     data->en_tcp = (data->shell_cnfg->tcp_cnfg & EN_TCP_MASK) >> EN_TCP_SHIFT;
     dbg_info("enabled TCP/IP %d, port %d\n", data->en_tcp, data->qsfp);
@@ -133,6 +141,20 @@ int read_shell_config(struct bus_driver_data *data) {
         data->shell_cnfg->net_ip = data->net_ip_addr;
         data->shell_cnfg->net_mac = data->net_mac_addr;
         dbg_info("set network ip %08x, mac %012llx (device %d)\n", data->net_ip_addr, data->net_mac_addr, data->dev_id);
+
+        if (data->n_net_ports > 1) {
+            data->net_ip_addr_p1 = data->net_ip_addr + 1;
+            data->net_mac_addr_p1 = data->net_mac_addr + 1;
+            if (ip_addr_p1[data->dev_id] && kstrtol(ip_addr_p1[data->dev_id], 16, &tmp) == 0) {
+                data->net_ip_addr_p1 = (uint32_t) tmp;
+            }
+            if (mac_addr_p1[data->dev_id] && kstrtol(mac_addr_p1[data->dev_id], 16, &tmp) == 0) {
+                data->net_mac_addr_p1 = (uint64_t) tmp;
+            }
+            data->shell_cnfg->net1_ip = data->net_ip_addr_p1;
+            data->shell_cnfg->net1_mac = data->net_mac_addr_p1;
+            dbg_info("set network port 1 ip %08x, mac %012llx (device %d)\n", data->net_ip_addr_p1, data->net_mac_addr_p1, data->dev_id);
+        }
     }
 
     return ret_val;

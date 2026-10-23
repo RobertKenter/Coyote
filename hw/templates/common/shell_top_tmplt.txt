@@ -138,6 +138,14 @@ module shell_top (
     (* io_buffer_type = "none" *) input  logic                              gt0_refclk_p,
     (* io_buffer_type = "none" *) input  logic                              gt0_refclk_n,
     
+    {% if cnfg.fdev == 'v80' and cnfg.n_net_ports > 1 %}
+    // GT 1: the second port of QSFP port 0's DCMAC, on its reference clock
+    (* io_buffer_type = "none" *) input  logic[3:0]                         gt1_rxp_in,
+    (* io_buffer_type = "none" *) input  logic[3:0]                         gt1_rxn_in,
+    (* io_buffer_type = "none" *) output  logic[3:0]                        gt1_txp_out,
+    (* io_buffer_type = "none" *) output  logic[3:0]                        gt1_txn_out,
+
+    {% endif %}
     {% if (cnfg.fdev != 'u50d') and (cnfg.fdev != 'v80') %}  
     // GT 1     
     (* io_buffer_type = "none" *) input  logic[3:0]                         gt1_rxp_in,
@@ -674,7 +682,23 @@ module shell_top (
     // SHELL CONFIG
     // ================-----------------------------------------------------------------
 
-{% if cnfg.en_net %}
+{% if cnfg.n_net_ports > 1 %}
+    // Network, per port
+    metaIntf #(.STYPE(logic[ARP_LUP_REQ_BITS-1:0])) arp_lookup_request [N_NET_PORTS] ();
+    metaIntf #(.STYPE(logic[IP_ADDR_BITS-1:0])) set_ip_addr [N_NET_PORTS] ();
+    metaIntf #(.STYPE(logic[MAC_ADDR_BITS-1:0])) set_mac_addr [N_NET_PORTS] ();
+
+{% if cnfg.en_stats %}
+    // Net stats, per port
+    net_stat_t [N_NET_PORTS-1:0] net_stats;
+{% endif %}
+
+    // RDMA memory offset, shared (RDMA only with several ports)
+    logic [63:0] ddr_offset_addr_rdma;
+
+    // DCMAC reset sequence and GT status
+    logic [31:0] dcmac_status;
+{% elif cnfg.en_net %}
     // Network
     metaIntf #(.STYPE(logic[ARP_LUP_REQ_BITS-1:0])) arp_lookup_request();
     metaIntf #(.STYPE(logic[IP_ADDR_BITS-1:0])) set_ip_addr();
@@ -730,6 +754,9 @@ module shell_top (
         .s_net_stats(net_stats),
   {% endif %}
 {% endif %}
+{% if cnfg.n_net_ports > 1 %}
+        .s_dcmac_status(dcmac_status),
+{% endif %}
         .m_decouple(decouple),
         .s_axi_ctrl(axi_cnfg_r)
     );
@@ -739,7 +766,31 @@ module shell_top (
     // NETWORK STACK
     // ================-----------------------------------------------------------------
 
-{% if cnfg.en_rdma %}
+{% if cnfg.n_net_ports > 1 %}
+    // RDMA, per port
+    metaIntf #(.STYPE(rdma_qp_ctx_t)) rdma_qp_interface [N_NET_PORTS] ();
+    metaIntf #(.STYPE(rdma_qp_conn_t)) rdma_conn_interface [N_NET_PORTS] ();
+    metaIntf #(.STYPE(dreq_t)) rdma_sq [N_NET_PORTS] ();
+    metaIntf #(.STYPE(ack_t)) rdma_cq [N_NET_PORTS] ();
+    metaIntf #(.STYPE(req_t)) rdma_rq_rd [N_NET_PORTS] ();
+    metaIntf #(.STYPE(req_t)) rdma_rq_wr [N_NET_PORTS] ();
+    AXI4S axis_rdma_rd_req [N_NET_PORTS] ();
+    AXI4S axis_rdma_rd_rsp [N_NET_PORTS] ();
+    AXI4S axis_rdma_wr [N_NET_PORTS] ();
+
+    // DDR AXI mm rdma: only port 0's reaches the memory stack; the stacks do not use it
+    AXI4 axi_ddr_rdma [N_NET_PORTS] ();
+
+    // MAC streams, on the stacks' clock (network_top's n_clk)
+{% if cnfg.en_nclk %}
+    AXI4S #(.AXI4S_DATA_BITS(AXI_NET_BITS)) axis_mac_rx [N_NET_PORTS] (.aclk(nclk), .aresetn(nresetn));
+    AXI4S #(.AXI4S_DATA_BITS(AXI_NET_BITS)) axis_mac_tx [N_NET_PORTS] (.aclk(nclk), .aresetn(nresetn));
+{% else %}
+    AXI4S #(.AXI4S_DATA_BITS(AXI_NET_BITS)) axis_mac_rx [N_NET_PORTS] (.aclk(aclk), .aresetn(aresetn));
+    AXI4S #(.AXI4S_DATA_BITS(AXI_NET_BITS)) axis_mac_tx [N_NET_PORTS] (.aclk(aclk), .aresetn(aresetn));
+{% endif %}
+
+{% elif cnfg.en_rdma %}
     // RDMA setup
     metaIntf #(.STYPE(rdma_qp_ctx_t)) rdma_qp_interface ();
     metaIntf #(.STYPE(rdma_qp_conn_t)) rdma_conn_interface ();
@@ -788,6 +839,69 @@ module shell_top (
     metaIntf #(.STYPE(logic[64-1:0])) filter_config ();
 {% endif %}
     
+{% if cnfg.n_net_ports > 1 %}
+    // One DCMAC, two ports; a stack per port, each serving the vFPGA of the same index
+    network_dcmac_ports inst_network_dcmac (
+{% if cnfg.en_nclk %}
+        .aclk(nclk),
+        .aresetn(nresetn),
+{% else %}
+        .aclk(aclk),
+        .aresetn(aresetn),
+{% endif %}
+        .gt_refclk_p(gt0_refclk_p),
+        .gt_refclk_n(gt0_refclk_n),
+        .gt0_rxp_in(gt0_rxp_in),
+        .gt0_rxn_in(gt0_rxn_in),
+        .gt0_txp_out(gt0_txp_out),
+        .gt0_txn_out(gt0_txn_out),
+        .gt1_rxp_in(gt1_rxp_in),
+        .gt1_rxn_in(gt1_rxn_in),
+        .gt1_txp_out(gt1_txp_out),
+        .gt1_txn_out(gt1_txn_out),
+        .m_axis_net_rx(axis_mac_rx),
+        .s_axis_net_tx(axis_mac_tx),
+        .m_status(dcmac_status)
+    );
+
+    for(genvar p = 0; p < N_NET_PORTS; p++) begin : g_net_port
+        network_top #(
+            .CROSS_EARLY(0),
+{% if cnfg.en_nclk %}
+            .CROSS_LATE(1)
+{% else %}
+            .CROSS_LATE(0)
+{% endif %}
+        ) inst_network_top (
+            .sys_reset(sys_reset),
+            .init_clk(dclk),
+            .s_axis_mac_rx(axis_mac_rx[p]),
+            .m_axis_mac_tx(axis_mac_tx[p]),
+            .s_arp_lookup_request(arp_lookup_request[p]),
+            .s_set_ip_addr(set_ip_addr[p]),
+            .s_set_mac_addr(set_mac_addr[p]),
+{% if cnfg.en_stats %}
+            .m_net_stats(net_stats[p]),
+{% endif %}
+            .s_rdma_qp_interface(rdma_qp_interface[p]),
+            .s_rdma_conn_interface(rdma_conn_interface[p]),
+            .s_rdma_sq(rdma_sq[p]),
+            .m_rdma_ack(rdma_cq[p]),
+            .m_rdma_rd_req(rdma_rq_rd[p]),
+            .m_rdma_wr_req(rdma_rq_wr[p]),
+            .s_axis_rdma_rd_req(axis_rdma_rd_req[p]),
+            .s_axis_rdma_rd_rsp(axis_rdma_rd_rsp[p]),
+            .m_axis_rdma_wr(axis_rdma_wr[p]),
+            .s_ddr_offset_addr_rdma(ddr_offset_addr_rdma),
+            .m_axi_rdma_ddr(axi_ddr_rdma[p]),
+            .aclk(aclk),
+            .aresetn(aresetn),
+            .nclk(nclk),
+            .nresetn(nresetn)
+        );
+    end
+
+{% else %}
     network_top #(
 {% if cnfg.fpga_arch == 'ultrascale_plus' %}
 {% if cnfg.en_nclk %}
@@ -872,6 +986,7 @@ module shell_top (
         .nclk(nclk),
         .nresetn(nresetn)
     );	
+{% endif %}
 
 {% if cnfg.en_stats and cnfg.fpga_arch == 'ultrascale_plus' %}
     vio_shell_nstats inst_vio_shell_nstats (
@@ -910,6 +1025,9 @@ module shell_top (
 {% elif cnfg.en_tcp %}
     axi_stripe (.aclk(aclk), .aresetn(aresetn), .s_axi(axi_ddr_tcp), .m_axi(axi_mem[0]));
     
+{% elif cnfg.en_rdma and cnfg.n_net_ports > 1 %}
+    axi_stripe (.aclk(aclk), .aresetn(aresetn), .s_axi(axi_ddr_rdma[0]), .m_axi(axi_mem[0]));
+
 {% elif cnfg.en_rdma %}
     axi_stripe (.aclk(aclk), .aresetn(aresetn), .s_axi(axi_ddr_rdma), .m_axi(axi_mem[0]));
 

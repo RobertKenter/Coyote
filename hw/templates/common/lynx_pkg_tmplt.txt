@@ -104,6 +104,9 @@
 {% if cnfg.mult_regions %}
 `define MULT_REGIONS
 {% endif %}
+{% if cnfg.n_net_ports > 1 %}
+`define NET_PER_REGION
+{% endif %}
 {% if cnfg.mult_strm_axi %}
 `define MULT_STRM_AXI
 {% endif %}
@@ -405,6 +408,7 @@ package lynxTypes;
     localparam integer TCP_FLOW = {{ cnfg.en_tcp }};
     localparam integer N_WBS = {{ cnfg.n_wbs }};
     localparam integer QSFP = {{ cnfg.qsfp }};
+    localparam integer N_NET_PORTS = {{ cnfg.n_net_ports }}; // above 1, vFPGA i on port i
 
     localparam integer N_CARD_AXI = {{ cnfg.n_card_axi }};
     localparam integer N_STRM_AXI = {{ cnfg.n_strm_axi }};

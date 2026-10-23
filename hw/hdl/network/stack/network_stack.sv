@@ -115,13 +115,19 @@ module network_stack #(
 
 // Sync the reset (timing)
 (* DONT_TOUCH = "yes" *)
-logic nresetn_r = 1'b1;
+logic nresetn_r_sync = 1'b1;
 (* DONT_TOUCH = "yes" *)
 logic nresetn_r_int = 1'b1;
 
+// The whole stack's reset: kept free of DONT_TOUCH so that synthesis and placement can
+// replicate it, since a single register cannot reach the stack's far corners in one cycle
+(* max_fanout = 1000 *)
+logic nresetn_r = 1'b1;
+
 always_ff @(posedge nclk) begin
     nresetn_r_int <= nresetn;
-    nresetn_r <= nresetn_r_int;
+    nresetn_r_sync <= nresetn_r_int;
+    nresetn_r <= nresetn_r_sync;
 end
 
 // Ip handler

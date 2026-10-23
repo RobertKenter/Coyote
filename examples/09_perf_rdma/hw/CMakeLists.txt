@@ -40,8 +40,13 @@ set(N_STRM_AXI 2)
 # Incldue Coyote's RDMA stack during synthesis
 set(EN_RDMA 1)
 
-# Number of vFPGAs (user applications)
-set(N_REGIONS 1)
+# Number of vFPGAs (user applications); on the V80, PERF_PORTS=2 gives each vFPGA its own network
+# port, both running this example
+if(NOT DEFINED PERF_PORTS)
+    set(PERF_PORTS 1)
+endif()
+set(N_REGIONS ${PERF_PORTS})
+set(N_NET_PORTS ${PERF_PORTS})
 
 # Build with optimization, since timing closure with RDMA can be difficult
 set(BUILD_OPT 1)
@@ -50,9 +55,16 @@ set(BUILD_OPT 1)
 validation_checks_hw()
 
 # Load a user application in Configuration #0, Region #0
-load_apps (
-    VFPGA_C0_0 "src"
-)
+if(PERF_PORTS EQUAL 1)
+    load_apps (
+        VFPGA_C0_0 "src"
+    )
+else()
+    load_apps (
+        VFPGA_C0_0 "src"
+        VFPGA_C0_1 "src"
+    )
+endif()
 
 # Create the hardware project
 create_hw()

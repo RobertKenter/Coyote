@@ -30,7 +30,11 @@ module shell_slave (
   input  logic              aclk,
   input  logic              aresetn,
 
-`ifdef EN_NET
+`ifdef NET_PER_REGION
+  // IP and MAC, per network port
+  metaIntf.m                m_set_ip_addr [N_NET_PORTS],
+  metaIntf.m                m_set_mac_addr [N_NET_PORTS],
+`elsif EN_NET
   // IP
   metaIntf.m                m_set_ip_addr,
   metaIntf.m                m_set_mac_addr,
@@ -56,10 +60,17 @@ module shell_slave (
   `ifdef EN_XCH_1
     input hdma_stat_t               s_hdma_stats_1,
   `endif
-  `ifdef EN_NET
+  `ifdef NET_PER_REGION
+    input net_stat_t [N_NET_PORTS-1:0] s_net_stats,
+  `elsif EN_NET
     input net_stat_t                s_net_stats,
   `endif
 `endif 
+
+`ifdef NET_PER_REGION
+  // DCMAC reset sequence and GT status (network_dcmac_ports), any clock domain
+  input  logic [31:0]       s_dcmac_status,
+`endif
 
   // Control bus (HOST)
   AXI4L.s                   s_axi_ctrl
@@ -132,6 +143,11 @@ localparam integer NET_MACADDR_REG        = 33;
 localparam integer TCP_OFFS_REG           = 34;
 // 35 - (RW) : RDMA ddr offset
 localparam integer RDMA_OFFS_REG          = 35;
+// 36, 37 (W) : second network port's IP and MAC address (N_NET_PORTS > 1)
+localparam integer NET1_IPADDR_REG        = 36;
+localparam integer NET1_MACADDR_REG       = 37;
+// 38 (RO) : DCMAC reset sequence and GT status (N_NET_PORTS > 1; see network_dcmac_ports)
+localparam integer DCMAC_STATUS_REG       = 38;
 
 // Host DMA (XDMA/QDMA) STATS
 localparam integer HDMA_STAT_0_BPSS       = 64;
@@ -151,6 +167,50 @@ localparam integer NET_STAT_IBV_REG       = 101;
 localparam integer NET_STAT_DROP_REG      = 102;
 localparam integer NET_STAT_SESS_REG      = 103;
 localparam integer NET_STAT_DOWN_REG      = 104;
+// 112 - 120 (RO) : the second network port's, in the same order (N_NET_PORTS > 1)
+localparam integer NET1_STAT_OFFS         = 16;
+
+`ifdef NET_PER_REGION
+// Per-port IP and MAC updates; interface array elements take constant indices only
+logic [N_NET_PORTS-1:0] set_ip_valid;
+logic [N_NET_PORTS-1:0][IP_ADDR_BITS-1:0] set_ip_data;
+logic [N_NET_PORTS-1:0] set_mac_valid;
+logic [N_NET_PORTS-1:0][MAC_ADDR_BITS-1:0] set_mac_data;
+
+for (genvar p = 0; p < N_NET_PORTS; p++) begin : g_net_addr
+    assign m_set_ip_addr[p].valid = set_ip_valid[p];
+    assign m_set_ip_addr[p].data = set_ip_data[p];
+    assign m_set_mac_addr[p].valid = set_mac_valid[p];
+    assign m_set_mac_addr[p].data = set_mac_data[p];
+end
+
+`endif
+
+`ifdef NET_PER_REGION
+// The DCMAC status comes from the DCMAC's and the GTs' clocks; bits are quasi-static
+(* ASYNC_REG = "TRUE" *) logic [31:0] dcmac_status_s0, dcmac_status_s1;
+always_ff @(posedge aclk) begin
+    dcmac_status_s0 <= s_dcmac_status;
+    dcmac_status_s1 <= dcmac_status_s0;
+end
+`endif
+
+// Network statistics, per port
+`ifdef EN_STATS
+`ifdef NET_PER_REGION
+// Registered here: the ports' counters come from stacks in different SLRs, and the read mux
+// would otherwise stretch between them
+net_stat_t net_stats_0;
+net_stat_t net_stats_1;
+always_ff @(posedge aclk) begin
+    net_stats_0 <= s_net_stats[0];
+    net_stats_1 <= s_net_stats[1];
+end
+`elsif EN_NET
+net_stat_t net_stats_0;
+assign net_stats_0 = s_net_stats;
+`endif
+`endif
 
 // ---------------------------------------------------------------------------------------- 
 // Write process 
@@ -162,7 +222,10 @@ always_ff @(posedge aclk) begin
     slv_reg <= 'X;
     slv_reg[CTRL_DP_REG_SET][63:32] <= 1'b1;
 
-`ifdef EN_NET
+`ifdef NET_PER_REGION
+    set_ip_valid <= 0;
+    set_mac_valid <= 0;
+`elsif EN_NET
     m_set_ip_addr.valid <= 1'b0;
     m_set_mac_addr.valid <= 1'b0;
 `endif
@@ -178,7 +241,10 @@ always_ff @(posedge aclk) begin
   end
   else begin
 
-`ifdef EN_NET
+`ifdef NET_PER_REGION
+    set_ip_valid <= 0;
+    set_mac_valid <= 0;
+`elsif EN_NET
     m_set_ip_addr.valid <= 1'b0;
     m_set_mac_addr.valid <= 1'b0;
 `endif
@@ -198,7 +264,22 @@ always_ff @(posedge aclk) begin
             end
           end
 
-`ifdef EN_NET
+`ifdef NET_PER_REGION
+        NET_IPADDR_REG, NET1_IPADDR_REG: // IP address, per port
+          for (int i = 0; i < 4; i++) begin
+            if(s_axi_ctrl.wstrb[i]) begin
+              set_ip_data[axi_awaddr[ADDR_LSB+:ADDR_MSB] == NET1_IPADDR_REG][(i*8)+:8] <= s_axi_ctrl.wdata[(i*8)+:8];
+              set_ip_valid[axi_awaddr[ADDR_LSB+:ADDR_MSB] == NET1_IPADDR_REG] <= 1'b1;
+            end
+          end
+        NET_MACADDR_REG, NET1_MACADDR_REG: // MAC address, per port
+          for (int i = 0; i < MAC_ADDR_BITS/8; i++) begin
+            if(s_axi_ctrl.wstrb[i]) begin
+              set_mac_data[axi_awaddr[ADDR_LSB+:ADDR_MSB] == NET1_MACADDR_REG][(i*8)+:8] <= s_axi_ctrl.wdata[(i*8)+:8];
+              set_mac_valid[axi_awaddr[ADDR_LSB+:ADDR_MSB] == NET1_MACADDR_REG] <= 1'b1;
+            end
+          end
+`elsif EN_NET
         NET_IPADDR_REG: // IP address
           for (int i = 0; i < 4; i++) begin
             if(s_axi_ctrl.wstrb[i]) begin
@@ -285,6 +366,7 @@ always_ff @(posedge aclk) begin
         RDMA_CNFG_REG: begin // RDMA config
           axi_rdata[0] <= RDMA_FLOW;
           axi_rdata[1] <= QSFP;
+          axi_rdata[7:4] <= N_NET_PORTS; // above 1, vFPGA i has network port i
         end
         TCP_CNFG_REG: begin // TCP config
           axi_rdata[0] <= TCP_FLOW;
@@ -294,6 +376,11 @@ always_ff @(posedge aclk) begin
 `ifdef EN_RDMA
         RDMA_OFFS_REG: // Offset
           axi_rdata <= slv_reg[RDMA_OFFS_REG];
+`endif
+
+`ifdef NET_PER_REGION
+        DCMAC_STATUS_REG: // DCMAC reset sequence and GT status
+          axi_rdata[31:0] <= dcmac_status_s1;
 `endif
 
 `ifdef EN_TCP
@@ -323,23 +410,43 @@ always_ff @(posedge aclk) begin
 
   `ifdef EN_NET
           NET_STAT_PKG_REG: // rx and tx
-            axi_rdata <= {s_net_stats.tx_pkg_counter, s_net_stats.rx_pkg_counter};
+            axi_rdata <= {net_stats_0.tx_pkg_counter, net_stats_0.rx_pkg_counter};
           NET_STAT_ARP_REG: // arp
-            axi_rdata <= {s_net_stats.arp_tx_pkg_counter, s_net_stats.arp_rx_pkg_counter}; 
+            axi_rdata <= {net_stats_0.arp_tx_pkg_counter, net_stats_0.arp_rx_pkg_counter};
           NET_STAT_ICMP_REG: // icmp
-            axi_rdata <= {s_net_stats.icmp_tx_pkg_counter, s_net_stats.icmp_rx_pkg_counter}; 
+            axi_rdata <= {net_stats_0.icmp_tx_pkg_counter, net_stats_0.icmp_rx_pkg_counter};
           NET_STAT_TCP_REG: // tcp
-            axi_rdata <= {s_net_stats.tcp_tx_pkg_counter, s_net_stats.tcp_rx_pkg_counter}; 
+            axi_rdata <= {net_stats_0.tcp_tx_pkg_counter, net_stats_0.tcp_rx_pkg_counter};
           NET_STAT_RDMA_REG: // rdma
-            axi_rdata <= {s_net_stats.roce_tx_pkg_counter, s_net_stats.roce_rx_pkg_counter}; 
+            axi_rdata <= {net_stats_0.roce_tx_pkg_counter, net_stats_0.roce_rx_pkg_counter};
           NET_STAT_IBV_REG: // ibv
-            axi_rdata <= {s_net_stats.ibv_tx_pkg_counter, s_net_stats.ibv_rx_pkg_counter}; 
+            axi_rdata <= {net_stats_0.ibv_tx_pkg_counter, net_stats_0.ibv_rx_pkg_counter};
           NET_STAT_DROP_REG: // rdma drop
-            axi_rdata <= {s_net_stats.roce_retrans_counter, s_net_stats.roce_psn_drop_counter}; 
+            axi_rdata <= {net_stats_0.roce_retrans_counter, net_stats_0.roce_psn_drop_counter};
           NET_STAT_SESS_REG: // tcp sessions
-            axi_rdata[31:0] <= s_net_stats.tcp_session_counter; 
+            axi_rdata[31:0] <= net_stats_0.tcp_session_counter;
           NET_STAT_DOWN_REG: // rdma
-            axi_rdata[0] <= s_net_stats.axis_stream_down;
+            axi_rdata[0] <= net_stats_0.axis_stream_down;
+  `endif
+  `ifdef NET_PER_REGION
+          NET_STAT_PKG_REG + NET1_STAT_OFFS: // rx and tx
+            axi_rdata <= {net_stats_1.tx_pkg_counter, net_stats_1.rx_pkg_counter};
+          NET_STAT_ARP_REG + NET1_STAT_OFFS: // arp
+            axi_rdata <= {net_stats_1.arp_tx_pkg_counter, net_stats_1.arp_rx_pkg_counter};
+          NET_STAT_ICMP_REG + NET1_STAT_OFFS: // icmp
+            axi_rdata <= {net_stats_1.icmp_tx_pkg_counter, net_stats_1.icmp_rx_pkg_counter};
+          NET_STAT_TCP_REG + NET1_STAT_OFFS: // tcp
+            axi_rdata <= {net_stats_1.tcp_tx_pkg_counter, net_stats_1.tcp_rx_pkg_counter};
+          NET_STAT_RDMA_REG + NET1_STAT_OFFS: // rdma
+            axi_rdata <= {net_stats_1.roce_tx_pkg_counter, net_stats_1.roce_rx_pkg_counter};
+          NET_STAT_IBV_REG + NET1_STAT_OFFS: // ibv
+            axi_rdata <= {net_stats_1.ibv_tx_pkg_counter, net_stats_1.ibv_rx_pkg_counter};
+          NET_STAT_DROP_REG + NET1_STAT_OFFS: // rdma drop
+            axi_rdata <= {net_stats_1.roce_retrans_counter, net_stats_1.roce_psn_drop_counter};
+          NET_STAT_SESS_REG + NET1_STAT_OFFS: // tcp sessions
+            axi_rdata[31:0] <= net_stats_1.tcp_session_counter;
+          NET_STAT_DOWN_REG + NET1_STAT_OFFS: // rdma
+            axi_rdata[0] <= net_stats_1.axis_stream_down;
   `endif
 
 `endif

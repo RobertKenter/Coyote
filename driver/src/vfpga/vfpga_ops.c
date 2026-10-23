@@ -540,8 +540,13 @@ long vfpga_dev_ioctl_impl(struct vfpga_dev *device, unsigned int command, unsign
                     pr_warn("user data could not be coppied, return %d\n", ret_val);
                 } else {
                     spin_lock(&device_data->stat_lock);
-                    device_data->shell_cnfg->net_ip = tmp[0];
-                    device_data->net_ip_addr = tmp[0];
+                    if (device_data->n_net_ports > 1 && device->id == 1) {
+                        device_data->shell_cnfg->net1_ip = tmp[0];
+                        device_data->net_ip_addr_p1 = tmp[0];
+                    } else {
+                        device_data->shell_cnfg->net_ip = tmp[0];
+                        device_data->net_ip_addr = tmp[0];
+                    }
                     dbg_info("IP address changed to %08llx\n", tmp[0]);
                     spin_unlock(&device_data->stat_lock);
                 }
@@ -565,8 +570,13 @@ long vfpga_dev_ioctl_impl(struct vfpga_dev *device, unsigned int command, unsign
                     pr_warn("user data could not be coppied, return %d\n", ret_val);
                 } else {
                     spin_lock(&device_data->stat_lock);
-                    device_data->shell_cnfg->net_mac = tmp[0];
-                    device_data->net_mac_addr = tmp[0];
+                    if (device_data->n_net_ports > 1 && device->id == 1) {
+                        device_data->shell_cnfg->net1_mac = tmp[0];
+                        device_data->net_mac_addr_p1 = tmp[0];
+                    } else {
+                        device_data->shell_cnfg->net_mac = tmp[0];
+                        device_data->net_mac_addr = tmp[0];
+                    }
                     dbg_info("MAC address changed to %llx\n", tmp[0]);
                     spin_unlock(&device_data->stat_lock);
                 }
@@ -579,7 +589,9 @@ long vfpga_dev_ioctl_impl(struct vfpga_dev *device, unsigned int command, unsign
         // Get FPGA IP address
         // Return: IP address
         case IOCTL_GET_IP_ADDRESS:
-            tmp[0] = device_data->net_ip_addr;
+            // With a network port per vFPGA, this vFPGA's port's
+            tmp[0] = (device_data->n_net_ports > 1 && device->id == 1) ? device_data->net_ip_addr_p1
+                                                                       : device_data->net_ip_addr;
             dbg_info("FPGA IP address %llx\n", tmp[0]);
             ret_val = copy_to_user((unsigned long *) arg, &tmp, sizeof(unsigned long));
             if (ret_val != 0) {
@@ -590,7 +602,8 @@ long vfpga_dev_ioctl_impl(struct vfpga_dev *device, unsigned int command, unsign
         // Get FPGA MAC address
         // Return: MAC address
         case IOCTL_GET_MAC_ADDRESS:
-            tmp[0] = device_data->net_mac_addr;
+            tmp[0] = (device_data->n_net_ports > 1 && device->id == 1) ? device_data->net_mac_addr_p1
+                                                                       : device_data->net_mac_addr;
             dbg_info("FPGA MAC address %llx\n", tmp[0]);
             ret_val = copy_to_user((unsigned long *) arg, &tmp, sizeof(unsigned long));
             if (ret_val != 0) {
@@ -604,7 +617,8 @@ long vfpga_dev_ioctl_impl(struct vfpga_dev *device, unsigned int command, unsign
             tmp[0] = ((uint64_t)device_data->n_fpga_chan << 32) | ((uint64_t)device_data->n_fpga_reg << 48) |
                      ((uint64_t)device_data->en_avx) | ((uint64_t)device_data->en_wb << 1) |
                      ((uint64_t)device_data->en_strm << 2) | ((uint64_t)device_data->en_mem << 3) | ((uint64_t)device_data->en_pr << 4) | 
-                     ((uint64_t)device_data->en_rdma << 16) | ((uint64_t)device_data->en_tcp << 17);
+                     ((uint64_t)device_data->en_rdma << 16) | ((uint64_t)device_data->en_tcp << 17) |
+                     ((uint64_t)device_data->n_net_ports << 20);
 
             tmp[1] = ((uint64_t)device_data->shell_cnfg->ctrl_cnfg);
             dbg_info("reading shell config 0x%llx\n", tmp[0]);

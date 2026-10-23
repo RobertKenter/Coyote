@@ -26,16 +26,39 @@ ssize_t cyt_attr_ip_show(struct kobject *kobj, struct kobj_attribute *attr, char
     BUG_ON(!bus_data); 
 
     dbg_info("coyote-sysfs:  current IP address: 0x%08x, port: %d\n", bus_data->net_ip_addr, bus_data->qsfp);
+    if (bus_data->n_net_ports > 1) {
+        return sprintf(buff, "IP address: %08x, port: 0\nIP address: %08x, port: 1\n",
+                       bus_data->net_ip_addr, bus_data->net_ip_addr_p1);
+    }
     return sprintf(buff, "IP address: %08x, port: %d\n", bus_data->net_ip_addr, bus_data->qsfp);
 }
 
+// "<ip>" sets the first port; "<port> <ip>" a given one, on shells with several ports
 ssize_t cyt_attr_ip_store(struct kobject *kobj, struct kobj_attribute *attr, const char *buff, size_t count) {
     struct bus_driver_data *bus_data = container_of(kobj, struct bus_driver_data, cyt_kobj);
     BUG_ON(!bus_data); 
 
-    sscanf(buff,"%08x",&bus_data->net_ip_addr);
-    dbg_info("coyote-sysfs:  setting IP address to: %08x, port %d\n", bus_data->net_ip_addr, bus_data->qsfp);
-    bus_data->shell_cnfg->net_ip = bus_data->net_ip_addr;
+    int port = 0;
+    uint32_t ip = 0;
+    if (strchr(buff, ' ')) {
+        if (sscanf(buff, "%d %08x", &port, &ip) != 2) {
+            return -EINVAL;
+        }
+    } else if (sscanf(buff, "%08x", &ip) != 1) {
+        return -EINVAL;
+    }
+    if (port < 0 || port >= bus_data->n_net_ports) {
+        return -EINVAL;
+    }
+
+    dbg_info("coyote-sysfs:  setting IP address to: %08x, port %d\n", ip, port);
+    if (port == 0) {
+        bus_data->net_ip_addr = ip;
+        bus_data->shell_cnfg->net_ip = ip;
+    } else {
+        bus_data->net_ip_addr_p1 = ip;
+        bus_data->shell_cnfg->net1_ip = ip;
+    }
 
     return count;
 }
@@ -45,16 +68,39 @@ ssize_t cyt_attr_mac_show(struct kobject *kobj, struct kobj_attribute *attr, cha
     BUG_ON(!bus_data); 
 
     dbg_info("coyote-sysfs:  current MAC address: 0x%012llx, port: %d\n", bus_data->net_mac_addr, bus_data->qsfp);
+    if (bus_data->n_net_ports > 1) {
+        return sprintf(buff, "MAC address: %012llx, port: 0\nMAC address: %012llx, port: 1\n",
+                       bus_data->net_mac_addr, bus_data->net_mac_addr_p1);
+    }
     return sprintf(buff, "MAC address: %012llx, port: %d\n", bus_data->net_mac_addr, bus_data->qsfp);
 }
 
+// "<mac>" sets the first port; "<port> <mac>" a given one, on shells with several ports
 ssize_t cyt_attr_mac_store(struct kobject *kobj, struct kobj_attribute *attr, const char *buff, size_t count) {
     struct bus_driver_data *bus_data = container_of(kobj, struct bus_driver_data, cyt_kobj);
     BUG_ON(!bus_data); 
 
-    sscanf(buff,"%012llx",&bus_data->net_mac_addr);
-    dbg_info("coyote-sysfs:  setting MAC address to: %012llx, port: %d\n", bus_data->net_mac_addr, bus_data->qsfp);
-    bus_data->shell_cnfg->net_mac = bus_data->net_mac_addr;
+    int port = 0;
+    uint64_t mac = 0;
+    if (strchr(buff, ' ')) {
+        if (sscanf(buff, "%d %012llx", &port, &mac) != 2) {
+            return -EINVAL;
+        }
+    } else if (sscanf(buff, "%012llx", &mac) != 1) {
+        return -EINVAL;
+    }
+    if (port < 0 || port >= bus_data->n_net_ports) {
+        return -EINVAL;
+    }
+
+    dbg_info("coyote-sysfs:  setting MAC address to: %012llx, port: %d\n", mac, port);
+    if (port == 0) {
+        bus_data->net_mac_addr = mac;
+        bus_data->shell_cnfg->net_mac = mac;
+    } else {
+        bus_data->net_mac_addr_p1 = mac;
+        bus_data->shell_cnfg->net1_mac = mac;
+    }
 
     return count;
 }
@@ -78,11 +124,8 @@ ssize_t cyt_attr_eost_store(struct kobject *kobj, struct kobj_attribute *attr, c
     return count;
 }
 
-ssize_t cyt_attr_nstats_show(struct kobject *kobj, struct kobj_attribute *attr, char *buff) {   
-    struct bus_driver_data *bus_data = container_of(kobj, struct bus_driver_data, cyt_kobj);
-    BUG_ON(!bus_data); 
-
-    return sprintf(buff, "\n -- \033[31m\e[1mNET STATS\033[0m\e[0m QSFP0\n\n"
+static int nstats_port(char *buff, int port, uint64_t *net_debug) {
+    return sprintf(buff, "\n -- \033[31m\e[1mNET STATS\033[0m\e[0m QSFP%d\n\n"
         "RX pkgs: %lld\n"
         "TX pkgs: %lld\n"
         "ARP RX pkgs: %lld\n"
@@ -99,24 +142,64 @@ ssize_t cyt_attr_nstats_show(struct kobject *kobj, struct kobj_attribute *attr, 
         "Retrans cnt: %lld\n"
         "TCP session cnt: %lld\n"
         "STRM down: %lld\n\n", 
-        
-        LOW_32 (bus_data->shell_cnfg->net_debug[0]),
-        HIGH_32(bus_data->shell_cnfg->net_debug[0]),
-        LOW_32 (bus_data->shell_cnfg->net_debug[1]),
-        HIGH_32(bus_data->shell_cnfg->net_debug[1]),
-        LOW_32 (bus_data->shell_cnfg->net_debug[2]),
-        HIGH_32(bus_data->shell_cnfg->net_debug[2]),
-        LOW_32 (bus_data->shell_cnfg->net_debug[3]),
-        HIGH_32(bus_data->shell_cnfg->net_debug[3]),
-        LOW_32 (bus_data->shell_cnfg->net_debug[4]),
-        HIGH_32(bus_data->shell_cnfg->net_debug[4]),
-        LOW_32 (bus_data->shell_cnfg->net_debug[5]),
-        HIGH_32(bus_data->shell_cnfg->net_debug[5]),
-        LOW_32 (bus_data->shell_cnfg->net_debug[6]),
-        HIGH_32(bus_data->shell_cnfg->net_debug[6]),
-        LOW_32 (bus_data->shell_cnfg->net_debug[7]),
-        LOW_32 (bus_data->shell_cnfg->net_debug[8]) 
+        port,
+        LOW_32 (net_debug[0]),
+        HIGH_32(net_debug[0]),
+        LOW_32 (net_debug[1]),
+        HIGH_32(net_debug[1]),
+        LOW_32 (net_debug[2]),
+        HIGH_32(net_debug[2]),
+        LOW_32 (net_debug[3]),
+        HIGH_32(net_debug[3]),
+        LOW_32 (net_debug[4]),
+        HIGH_32(net_debug[4]),
+        LOW_32 (net_debug[5]),
+        HIGH_32(net_debug[5]),
+        LOW_32 (net_debug[6]),
+        HIGH_32(net_debug[6]),
+        LOW_32 (net_debug[7]),
+        LOW_32 (net_debug[8])
     );
+}
+
+// shell_slave DCMAC_STATUS_REG: dcmac_reset_ctrl's status (state 14 is the end of the sequence)
+// and each GT quad's reset-done and power good
+static int dcmac_status(char *buff, uint64_t v) {
+    return sprintf(buff, " -- \033[31m\e[1mDCMAC\033[0m\e[0m\n\n"
+        "Status: 0x%08llx\n"
+        "Reset state: %lld (14: done), sequences: %lld, GT reset: %lld\n"
+        "GT reset done TX/RX: now %lld/%lld, seen %lld/%lld, lost since %lld/%lld, wait timed out: %lld\n"
+        "Core reset TX/RX: %lld/%lld, datapath reset released: %lld\n"
+        "Quad 0 TX/RX done, power good: %lld/%lld %lld\n"
+        "Quad 1 TX/RX done, power good: %lld/%lld %lld\n\n",
+        v, v & 0x1f, (v >> 16) & 0xff, (v >> 5) & 1,
+        (v >> 8) & 1, (v >> 9) & 1, (v >> 6) & 1, (v >> 7) & 1, (v >> 13) & 1, (v >> 14) & 1, (v >> 15) & 1,
+        (v >> 11) & 1, (v >> 12) & 1, (v >> 10) & 1,
+        (v >> 24) & 1, (v >> 25) & 1, (v >> 26) & 1,
+        (v >> 27) & 1, (v >> 28) & 1, (v >> 29) & 1);
+}
+
+// One block per network port; with several, the second one's (QSFP1) follows, then the DCMAC's
+ssize_t cyt_attr_nstats_show(struct kobject *kobj, struct kobj_attribute *attr, char *buff) {
+    struct bus_driver_data *bus_data = container_of(kobj, struct bus_driver_data, cyt_kobj);
+    BUG_ON(!bus_data);
+
+    uint64_t net_debug[N_NET_STAT_REGS];
+    int sw;
+
+    for (int i = 0; i < N_NET_STAT_REGS; i++) {
+        net_debug[i] = bus_data->shell_cnfg->net_debug[i];
+    }
+    sw = nstats_port(buff, bus_data->n_net_ports > 1 ? 0 : bus_data->qsfp, net_debug);
+
+    if (bus_data->n_net_ports > 1) {
+        for (int i = 0; i < N_NET_STAT_REGS; i++) {
+            net_debug[i] = bus_data->shell_cnfg->net1_debug[i];
+        }
+        sw += nstats_port(buff + sw, 1, net_debug);
+        sw += dcmac_status(buff + sw, bus_data->shell_cnfg->dcmac_status);
+    }
+    return sw;
 }
 
 ssize_t cyt_attr_hstats_show(struct kobject *kobj, struct kobj_attribute *attr, char *buff) {   

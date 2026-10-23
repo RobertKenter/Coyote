@@ -95,6 +95,9 @@ clk_to_alt_serdes_clk\
 clk_to_serdes_clk\
 clk_to_ts_clk\
 dcmac_reset_ctrl_wrapper\
+clk2_to_serdes_clk\
+clk2_to_alt_serdes_clk\
+gt_reset_done_and\
 "
 
     set list_mods_missing ""
@@ -123,7 +126,9 @@ if { $bCheckIPsPassed != 1 } {
 ##################################################################
 
 # Hierarchical cell: bd_clock_reset_ctrl
-proc create_hier_cell_bd_clock_reset_ctrl { parentCell nameHier } {
+# n_channels: DCMAC channels the reset controller releases, 2 per 200GAUI-4 port
+# rewait: 1 to make a shell reset wait for the GTs it resets (dcmac_reset_ctrl REWAIT)
+proc create_hier_cell_bd_clock_reset_ctrl { parentCell nameHier {n_channels 2} {rewait 0} } {
 
   variable script_folder
 
@@ -176,6 +181,7 @@ proc create_hier_cell_bd_clock_reset_ctrl { parentCell nameHier } {
   create_bd_pin -dir I -type rst aresetn
   create_bd_pin -dir O -type rst axis_resetn
   create_bd_pin -dir O -type clk sys_clk
+  create_bd_pin -dir O -from 23 -to 0 dcmac_status
 
   # Create instance: diff_buff, and set properties
   set diff_buff [ create_bd_cell -type ip -vlnv xilinx.com:ip:util_ds_buf:2.2 diff_buff ]
@@ -219,6 +225,9 @@ proc create_hier_cell_bd_clock_reset_ctrl { parentCell nameHier } {
      catch {common::send_gid_msg -ssname BD::TCL -id 2096 -severity "ERROR" "Unable to referenced block <$block_name>. Please add the files for ${block_name}'s definition into the project."}
      return 1
    }
+  set_property CONFIG.N_CHANNELS $n_channels $dcmac_reset_ctrl
+  set_property CONFIG.REWAIT $rewait $dcmac_reset_ctrl
+  connect_bd_net [get_bd_pins dcmac_reset_ctrl/status] [get_bd_pins dcmac_status]
   
   # Create interface connections
   connect_bd_intf_net -intf_net Conn1 [get_bd_intf_pins diff_buff/CLK_IN_D1] [get_bd_intf_pins gt_clk]
@@ -443,7 +452,8 @@ proc create_hier_cell_datapath_tx { parentCell nameHier } {
 }
 
 # Hierarchical cell: dcmac_wrapper
-proc create_hier_cell_dcmac_wrapper { parentCell nameHier } {
+# n_ports 2: the second 200GAUI-4 port (DCMAC port 2, channels 2-3, serdes lanes 4-7) as well
+proc create_hier_cell_dcmac_wrapper { parentCell nameHier {n_ports 1} } {
 
   variable script_folder
   global dcmac_vlnv
@@ -517,12 +527,18 @@ proc create_hier_cell_dcmac_wrapper { parentCell nameHier } {
     CONFIG.MAC_PORT0_CONFIG_C0 {200GAUI-4} \
     CONFIG.MAC_PORT0_RX_STRIP_C0 {1} \
     CONFIG.MAC_PORT1_RX_STRIP_C0 {1} \
-    CONFIG.MAC_PORT2_ENABLE_C0 {0} \
+    CONFIG.MAC_PORT2_ENABLE_C0 [expr {$n_ports > 1}] \
     CONFIG.MAC_PORT3_ENABLE_C0 {0} \
     CONFIG.MAC_PORT4_ENABLE_C0 {0} \
     CONFIG.MAC_PORT5_ENABLE_C0 {0} \
     CONFIG.USE_AXIS_ALMOSTFULL_INDICATION {0} \
   ] $dcmac
+  if {$n_ports > 1} {
+    set_property -dict [list \
+      CONFIG.MAC_PORT2_CONFIG_C0 {200GAUI-4} \
+      CONFIG.MAC_PORT2_RX_STRIP_C0 {1} \
+    ] $dcmac
+  }
 
 
   # Create instance: dcmac200g_ctl_port, and set properties
@@ -568,7 +584,7 @@ proc create_hier_cell_dcmac_wrapper { parentCell nameHier } {
    }
   
   # Create instance: alt_serdes_clk_tx, and set properties
-  set block_name clk_to_alt_serdes_clk
+  set block_name [expr {$n_ports > 1 ? "clk2_to_alt_serdes_clk" : "clk_to_alt_serdes_clk"}]
   set block_cell_name alt_serdes_clk_tx
   if { [catch {set alt_serdes_clk_tx [create_bd_cell -type module -reference $block_name $block_cell_name] } errmsg] } {
      catch {common::send_gid_msg -ssname BD::TCL -id 2095 -severity "ERROR" "Unable to add referenced block <$block_name>. Please add the files for ${block_name}'s definition into the project."}
@@ -579,7 +595,7 @@ proc create_hier_cell_dcmac_wrapper { parentCell nameHier } {
    }
   
   # Create instance: serdes_clk_tx, and set properties
-  set block_name clk_to_serdes_clk
+  set block_name [expr {$n_ports > 1 ? "clk2_to_serdes_clk" : "clk_to_serdes_clk"}]
   set block_cell_name serdes_clk_tx
   if { [catch {set serdes_clk_tx [create_bd_cell -type module -reference $block_name $block_cell_name] } errmsg] } {
      catch {common::send_gid_msg -ssname BD::TCL -id 2095 -severity "ERROR" "Unable to add referenced block <$block_name>. Please add the files for ${block_name}'s definition into the project."}
@@ -601,7 +617,7 @@ proc create_hier_cell_dcmac_wrapper { parentCell nameHier } {
    }
   
   # Create instance: alt_serdes_clk_rx, and set properties
-  set block_name clk_to_alt_serdes_clk
+  set block_name [expr {$n_ports > 1 ? "clk2_to_alt_serdes_clk" : "clk_to_alt_serdes_clk"}]
   set block_cell_name alt_serdes_clk_rx
   if { [catch {set alt_serdes_clk_rx [create_bd_cell -type module -reference $block_name $block_cell_name] } errmsg] } {
      catch {common::send_gid_msg -ssname BD::TCL -id 2095 -severity "ERROR" "Unable to add referenced block <$block_name>. Please add the files for ${block_name}'s definition into the project."}
@@ -623,7 +639,7 @@ proc create_hier_cell_dcmac_wrapper { parentCell nameHier } {
    }
   
   # Create instance: serdes_clk_rx, and set properties
-  set block_name clk_to_serdes_clk
+  set block_name [expr {$n_ports > 1 ? "clk2_to_serdes_clk" : "clk_to_serdes_clk"}]
   set block_cell_name serdes_clk_rx
   if { [catch {set serdes_clk_rx [create_bd_cell -type module -reference $block_name $block_cell_name] } errmsg] } {
      catch {common::send_gid_msg -ssname BD::TCL -id 2095 -severity "ERROR" "Unable to add referenced block <$block_name>. Please add the files for ${block_name}'s definition into the project."}
@@ -646,6 +662,9 @@ proc create_hier_cell_dcmac_wrapper { parentCell nameHier } {
   
   # Create instance: const_1, and set properties
   set const_1 [ create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 const_1 ]
+
+  # The clock bus modules name their input clk, or clk0 and clk1 with two ports
+  set clk0 [expr {$n_ports > 1 ? "clk0" : "clk"}]
 
   # Create interface connections
   connect_bd_intf_net -intf_net s_axis_tx_1 [get_bd_intf_pins s_axis_tx] [get_bd_intf_pins axis_to_seg/s_axis]
@@ -841,9 +860,9 @@ proc create_hier_cell_dcmac_wrapper { parentCell nameHier } {
   connect_bd_net -net rx_channel_flush_1  [get_bd_pins rx_channel_flush] \
   [get_bd_pins dcmac/rx_channel_flush]
   connect_bd_net -net rx_clk_1  [get_bd_pins rx_clk] \
-  [get_bd_pins serdes_clk_rx/clk]
+  [get_bd_pins serdes_clk_rx/$clk0]
   connect_bd_net -net rx_clk_alt_1  [get_bd_pins rx_clk_alt] \
-  [get_bd_pins alt_serdes_clk_rx/clk]
+  [get_bd_pins alt_serdes_clk_rx/$clk0]
   connect_bd_net -net rx_core_clk_1  [get_bd_pins core_clk] \
   [get_bd_pins dcmac/rx_core_clk] \
   [get_bd_pins dcmac/tx_core_clk]
@@ -871,13 +890,66 @@ proc create_hier_cell_dcmac_wrapper { parentCell nameHier } {
   connect_bd_net -net tx_channel_flush_1  [get_bd_pins tx_channel_flush] \
   [get_bd_pins dcmac/tx_channel_flush]
   connect_bd_net -net tx_clk_1  [get_bd_pins tx_clk] \
-  [get_bd_pins serdes_clk_tx/clk]
+  [get_bd_pins serdes_clk_tx/$clk0]
   connect_bd_net -net tx_clk_alt_1  [get_bd_pins tx_clk_alt] \
-  [get_bd_pins alt_serdes_clk_tx/clk]
+  [get_bd_pins alt_serdes_clk_tx/$clk0]
   connect_bd_net -net tx_core_reset_1  [get_bd_pins tx_core_reset] \
   [get_bd_pins dcmac/tx_core_reset]
   connect_bd_net -net tx_serdes_reset_1  [get_bd_pins tx_serdes_reset] \
   [get_bd_pins dcmac/tx_serdes_reset]
+
+  if {$n_ports > 1} {
+    # Port 2: its client streams, serdes lanes 4-7 and its quad's clocks
+    create_bd_intf_pin -mode Master -vlnv xilinx.com:interface:axis_rtl:1.0 m_axis_rx_1
+    create_bd_intf_pin -mode Slave -vlnv xilinx.com:interface:axis_rtl:1.0 s_axis_tx_1
+    for {set l 4} {$l < 8} {incr l} {
+      create_bd_pin -dir O -from 255 -to 0 tx_data_$l
+      create_bd_pin -dir I -from 255 -to 0 rx_data_$l
+    }
+    create_bd_pin -dir I tx_clk_p1
+    create_bd_pin -dir I -type gt_usrclk tx_clk_alt_p1
+    create_bd_pin -dir I -type gt_usrclk rx_clk_p1
+    create_bd_pin -dir I rx_clk_alt_p1
+
+    if { [catch {set axis_to_seg_p1 [create_bd_cell -type module -reference axis_to_dcmac_seg_wrapper axis_to_seg_p1] } errmsg] } {
+      catch {common::send_gid_msg -ssname BD::TCL -id 2095 -severity "ERROR" "Unable to add referenced block <axis_to_dcmac_seg_wrapper>."}
+      return 1
+    }
+    if { [catch {set seg_to_axis_p1 [create_bd_cell -type module -reference axis_seg_to_unseg_converter seg_to_axis_p1] } errmsg] } {
+      catch {common::send_gid_msg -ssname BD::TCL -id 2095 -severity "ERROR" "Unable to add referenced block <axis_seg_to_unseg_converter>."}
+      return 1
+    }
+    set_property CONFIG.FREQ_HZ {390998840} [get_bd_intf_pins seg_to_axis_p1/m_axis0_pkt_out]
+
+    connect_bd_intf_net [get_bd_intf_pins s_axis_tx_1] [get_bd_intf_pins axis_to_seg_p1/s_axis]
+    connect_bd_intf_net [get_bd_intf_pins m_axis_rx_1] [get_bd_intf_pins seg_to_axis_p1/m_axis0_pkt_out]
+
+    for {set k 0} {$k < 4} {incr k} {
+      set seg [expr {$k + 4}]
+      connect_bd_net [get_bd_pins axis_to_seg_p1/tx_data_$k] [get_bd_pins dcmac/tx_axis_tdata$seg]
+      foreach f {ena eop err mty sop} {
+        connect_bd_net [get_bd_pins axis_to_seg_p1/tx_${f}_$k] [get_bd_pins dcmac/tx_axis_tuser_${f}$seg]
+      }
+      connect_bd_net [get_bd_pins dcmac/rx_axis_tdata$seg] [get_bd_pins seg_to_axis_p1/Seg2UnSegDat${k}_in]
+      foreach {f F} {ena Ena eop Eop err Err mty Mty sop Sop} {
+        connect_bd_net [get_bd_pins dcmac/rx_axis_tuser_${f}$seg] [get_bd_pins seg_to_axis_p1/Seg2UnSeg${F}${k}_in]
+      }
+      connect_bd_net [get_bd_pins dcmac/txdata_out_$seg] [get_bd_pins tx_data_$seg]
+      connect_bd_net [get_bd_pins rx_data_$seg] [get_bd_pins dcmac/rxdata_in_$seg]
+    }
+    connect_bd_net [get_bd_pins axis_to_seg_p1/tx_valid] [get_bd_pins dcmac/tx_axis_tvalid_2]
+    connect_bd_net [get_bd_pins dcmac/tx_axis_tready_2] [get_bd_pins axis_to_seg_p1/tx_ready]
+    connect_bd_net [get_bd_pins dcmac/rx_axis_tvalid_2] [get_bd_pins seg_to_axis_p1/rx_axis_tvalid_i]
+
+    connect_bd_net [get_bd_pins axis_tx_resetn] [get_bd_pins axis_to_seg_p1/aresetn]
+    connect_bd_net [get_bd_pins axis_rx_resetn] [get_bd_pins seg_to_axis_p1/aresetn_axis_seg_in]
+    connect_bd_net [get_bd_pins axis_clk] [get_bd_pins axis_to_seg_p1/aclk] [get_bd_pins seg_to_axis_p1/aclk_axis_seg_in]
+
+    connect_bd_net [get_bd_pins rx_clk_p1] [get_bd_pins serdes_clk_rx/clk1]
+    connect_bd_net [get_bd_pins tx_clk_p1] [get_bd_pins serdes_clk_tx/clk1]
+    connect_bd_net [get_bd_pins rx_clk_alt_p1] [get_bd_pins alt_serdes_clk_rx/clk1]
+    connect_bd_net [get_bd_pins tx_clk_alt_p1] [get_bd_pins alt_serdes_clk_tx/clk1]
+  }
 
   # Restore current instance
   current_bd_instance $oldCurInst
@@ -924,6 +996,7 @@ proc create_hier_cell_gt_wrapper { parentCell nameHier } {
   # Create pins
   create_bd_pin -dir O gt_rst_rx_done
   create_bd_pin -dir O gt_rst_tx_done
+  create_bd_pin -dir O gt_powergood
   create_bd_pin -dir I gt_rst
   create_bd_pin -dir I -type clk gt_ref_clk
   create_bd_pin -dir I -from 255 -to 0 tx_data_0
@@ -1076,6 +1149,7 @@ proc create_hier_cell_gt_wrapper { parentCell nameHier } {
   [get_bd_pins gt_rst_rx_done]
   connect_bd_net -net gtwiz_versal_0_INTF0_rst_tx_done_out  [get_bd_pins gtwiz_versal/INTF0_rst_tx_done_out] \
   [get_bd_pins gt_rst_tx_done]
+  connect_bd_net [get_bd_pins gtwiz_versal/gtpowergood] [get_bd_pins gt_powergood]
   connect_bd_net -net gtwiz_versal_INTF0_RX0_ch_rxdata  [get_bd_pins gtwiz_versal/INTF0_RX0_ch_rxdata] \
   [get_bd_pins rx_data_0]
   connect_bd_net -net gtwiz_versal_INTF0_RX1_ch_rxdata  [get_bd_pins gtwiz_versal/INTF0_RX1_ch_rxdata] \
@@ -1121,12 +1195,15 @@ proc create_hier_cell_gt_wrapper { parentCell nameHier } {
 # TOP-LEVEL
 ################################################################
 proc cr_bd_dcmac { parentCell } {
+    upvar #0 cfg cnfg
+    if {[info exists cnfg(n_net_ports)] && $cnfg(n_net_ports) > 1} {
+        return [cr_bd_dcmac_ports $parentCell]
+    }
+
     # Set up block design
     variable design_name
     set design_name dcmac_versal_axis_wrapper
     create_bd_design $design_name
-
-    upvar #0 cfg cnfg
 
     if { $parentCell eq "" } {
         set parentCell [get_bd_cells /]
@@ -1248,6 +1325,157 @@ proc cr_bd_dcmac { parentCell } {
     validate_bd_design
     save_bd_design
     close_bd_design $design_name 
+
+    return 0
+}
+
+################################################################
+# TOP-LEVEL, TWO PORTS
+################################################################
+# N_NET_PORTS = 2 on the V80: QSFP port 0's DCMAC runs a second 200GAUI-4 port on the partner cage.
+# Each port has its own GT quad (gt0: bank 209, gt1: bank 210) and datapaths; both quads use the one
+# reference clock (gt_clk, bank 209's).
+proc cr_bd_dcmac_ports { parentCell } {
+    variable design_name
+    set design_name dcmac_versal_axis_ports
+    create_bd_design $design_name
+
+    upvar #0 cfg cnfg
+
+    if { $parentCell eq "" } {
+        set parentCell [get_bd_cells /]
+    }
+    set parentObj [get_bd_cells $parentCell]
+    if { $parentObj == "" } {
+        catch {common::send_gid_msg -ssname BD::TCL -id 2090 -severity "ERROR" "Unable to find parent cell <$parentCell>!"}
+        return
+    }
+    set oldCurInst [current_bd_instance .]
+    current_bd_instance $parentObj
+
+    # Ports
+    for {set p 0} {$p < 2} {incr p} {
+        set s_axis_tx [ create_bd_intf_port -mode Slave -vlnv xilinx.com:interface:axis_rtl:1.0 s_axis_tx_$p ]
+        set_property -dict [ list \
+            CONFIG.HAS_TKEEP {1} \
+            CONFIG.HAS_TLAST {1} \
+            CONFIG.HAS_TREADY {1} \
+            CONFIG.HAS_TSTRB {0} \
+            CONFIG.LAYERED_METADATA {undef} \
+            CONFIG.TDATA_NUM_BYTES {64} \
+            CONFIG.TDEST_WIDTH {0} \
+            CONFIG.TID_WIDTH {0} \
+            CONFIG.TUSER_WIDTH {0} \
+        ] $s_axis_tx
+        create_bd_intf_port -mode Master -vlnv xilinx.com:interface:axis_rtl:1.0 m_axis_rx_$p
+        create_bd_intf_port -mode Master -vlnv xilinx.com:interface:gt_rtl:1.0 gt$p
+    }
+
+    set gt_clk [ create_bd_intf_port -mode Slave -vlnv xilinx.com:interface:diff_clock_rtl:1.0 gt_clk ]
+    set_property -dict [ list \
+        CONFIG.FREQ_HZ {322265625} \
+    ] $gt_clk
+
+    create_bd_port -dir I -type rst aresetn
+    create_bd_port -dir I -type clk aclk
+
+    # Reset sequence and GT status, for the shell's status register
+    create_bd_port -dir O -from 23 -to 0 dcmac_status
+    for {set q 0} {$q < 2} {incr q} {
+        create_bd_port -dir O gt${q}_tx_done
+        create_bd_port -dir O gt${q}_rx_done
+        create_bd_port -dir O gt${q}_powergood
+    }
+
+    # Instances
+    create_hier_cell_gt_wrapper [current_bd_instance .] gt_wrapper_0
+    create_hier_cell_gt_wrapper [current_bd_instance .] gt_wrapper_1
+    create_hier_cell_dcmac_wrapper [current_bd_instance .] dcmac_wrapper 2
+    for {set p 0} {$p < 2} {incr p} {
+        create_hier_cell_datapath_tx [current_bd_instance .] datapath_tx_$p
+        create_hier_cell_datapath_rx [current_bd_instance .] datapath_rx_$p
+    }
+    set rewait [expr {[info exists cnfg(dcmac_rewait)] ? $cnfg(dcmac_rewait) : 0}]
+    create_hier_cell_bd_clock_reset_ctrl [current_bd_instance .] bd_clock_reset_ctrl 4 $rewait
+    set rst_done_rx [ create_bd_cell -type module -reference gt_reset_done_and gt_rst_rx_done_both ]
+    set rst_done_tx [ create_bd_cell -type module -reference gt_reset_done_and gt_rst_tx_done_both ]
+
+    # Streams: port p's datapaths; the DCMAC wrapper names port 0's pins without a suffix
+    for {set p 0} {$p < 2} {incr p} {
+        set sfx [expr {$p == 0 ? "" : "_1"}]
+        connect_bd_intf_net [get_bd_intf_ports gt$p] [get_bd_intf_pins gt_wrapper_$p/gt]
+        connect_bd_intf_net [get_bd_intf_ports m_axis_rx_$p] [get_bd_intf_pins datapath_rx_$p/m_axis_rx]
+        connect_bd_intf_net [get_bd_intf_pins dcmac_wrapper/m_axis_rx$sfx] [get_bd_intf_pins datapath_rx_$p/s_axis_rx]
+        connect_bd_intf_net [get_bd_intf_ports s_axis_tx_$p] [get_bd_intf_pins datapath_tx_$p/s_axis_tx]
+        connect_bd_intf_net [get_bd_intf_pins dcmac_wrapper/s_axis_tx$sfx] [get_bd_intf_pins datapath_tx_$p/m_axis_tx]
+    }
+    connect_bd_intf_net [get_bd_intf_ports gt_clk] [get_bd_intf_pins bd_clock_reset_ctrl/gt_clk]
+
+    connect_bd_net [get_bd_ports aclk] \
+        [get_bd_pins datapath_tx_0/aclk] [get_bd_pins datapath_rx_0/aclk] \
+        [get_bd_pins datapath_tx_1/aclk] [get_bd_pins datapath_rx_1/aclk]
+    connect_bd_net [get_bd_ports aresetn] \
+        [get_bd_pins datapath_tx_0/aresetn] [get_bd_pins datapath_tx_1/aresetn] \
+        [get_bd_pins bd_clock_reset_ctrl/aresetn]
+
+    # Serdes lanes: 0-3 on quad 0, 4-7 on quad 1
+    for {set l 0} {$l < 8} {incr l} {
+        set q [expr {$l / 4}]
+        set ql [expr {$l % 4}]
+        connect_bd_net [get_bd_pins dcmac_wrapper/tx_data_$l] [get_bd_pins gt_wrapper_$q/tx_data_$ql]
+        connect_bd_net [get_bd_pins gt_wrapper_$q/rx_data_$ql] [get_bd_pins dcmac_wrapper/rx_data_$l]
+    }
+
+    # GT resets: one reference clock and reset for both quads; done when both are
+    connect_bd_net [get_bd_pins bd_clock_reset_ctrl/gt_reset] [get_bd_pins gt_wrapper_0/gt_rst] [get_bd_pins gt_wrapper_1/gt_rst]
+    connect_bd_net [get_bd_pins bd_clock_reset_ctrl/gt_ref_clk] [get_bd_pins gt_wrapper_0/gt_ref_clk] [get_bd_pins gt_wrapper_1/gt_ref_clk]
+    connect_bd_net [get_bd_pins gt_wrapper_0/gt_rst_rx_done] [get_bd_pins gt_rst_rx_done_both/a]
+    connect_bd_net [get_bd_pins gt_wrapper_1/gt_rst_rx_done] [get_bd_pins gt_rst_rx_done_both/b]
+    connect_bd_net [get_bd_pins gt_rst_rx_done_both/y] [get_bd_pins bd_clock_reset_ctrl/gt_reset_done_rx]
+    connect_bd_net [get_bd_pins gt_wrapper_0/gt_rst_tx_done] [get_bd_pins gt_rst_tx_done_both/a]
+    connect_bd_net [get_bd_pins gt_wrapper_1/gt_rst_tx_done] [get_bd_pins gt_rst_tx_done_both/b]
+    connect_bd_net [get_bd_pins gt_rst_tx_done_both/y] [get_bd_pins bd_clock_reset_ctrl/gt_reset_done_tx]
+    connect_bd_net [get_bd_pins bd_clock_reset_ctrl/dcmac_status] [get_bd_ports dcmac_status]
+    for {set q 0} {$q < 2} {incr q} {
+        connect_bd_net [get_bd_pins gt_wrapper_$q/gt_rst_tx_done] [get_bd_ports gt${q}_tx_done]
+        connect_bd_net [get_bd_pins gt_wrapper_$q/gt_rst_rx_done] [get_bd_ports gt${q}_rx_done]
+        connect_bd_net [get_bd_pins gt_wrapper_$q/gt_powergood] [get_bd_ports gt${q}_powergood]
+    }
+
+    connect_bd_net [get_bd_pins bd_clock_reset_ctrl/dcmac_axis_clk] \
+        [get_bd_pins dcmac_wrapper/axis_clk] \
+        [get_bd_pins datapath_tx_0/dclk] [get_bd_pins datapath_rx_0/dclk] \
+        [get_bd_pins datapath_tx_1/dclk] [get_bd_pins datapath_rx_1/dclk]
+    connect_bd_net [get_bd_pins bd_clock_reset_ctrl/axis_resetn] \
+        [get_bd_pins dcmac_wrapper/axis_tx_resetn] [get_bd_pins dcmac_wrapper/axis_rx_resetn] \
+        [get_bd_pins datapath_tx_0/dresetn] [get_bd_pins datapath_rx_0/dresetn] \
+        [get_bd_pins datapath_tx_1/dresetn] [get_bd_pins datapath_rx_1/dresetn]
+
+    # Serdes clocks: each quad's for its port's channels
+    connect_bd_net [get_bd_pins gt_wrapper_0/rx_clk] [get_bd_pins dcmac_wrapper/rx_clk]
+    connect_bd_net [get_bd_pins gt_wrapper_0/tx_clk] [get_bd_pins dcmac_wrapper/tx_clk]
+    connect_bd_net [get_bd_pins gt_wrapper_0/rx_clk_alt] [get_bd_pins dcmac_wrapper/rx_clk_alt]
+    connect_bd_net [get_bd_pins gt_wrapper_0/tx_clk_alt] [get_bd_pins dcmac_wrapper/tx_clk_alt]
+    connect_bd_net [get_bd_pins gt_wrapper_1/rx_clk] [get_bd_pins dcmac_wrapper/rx_clk_p1]
+    connect_bd_net [get_bd_pins gt_wrapper_1/tx_clk] [get_bd_pins dcmac_wrapper/tx_clk_p1]
+    connect_bd_net [get_bd_pins gt_wrapper_1/rx_clk_alt] [get_bd_pins dcmac_wrapper/rx_clk_alt_p1]
+    connect_bd_net [get_bd_pins gt_wrapper_1/tx_clk_alt] [get_bd_pins dcmac_wrapper/tx_clk_alt_p1]
+    connect_bd_net [get_bd_pins bd_clock_reset_ctrl/dcmac_core_clk] [get_bd_pins dcmac_wrapper/core_clk]
+    connect_bd_net [get_bd_pins bd_clock_reset_ctrl/sys_clk] [get_bd_pins dcmac_wrapper/ts_axil_clk] \
+        [get_bd_pins gt_wrapper_0/gtwiz_freerun_clk] [get_bd_pins gt_wrapper_1/gtwiz_freerun_clk]
+
+    connect_bd_net [get_bd_pins bd_clock_reset_ctrl/tx_core_reset] [get_bd_pins dcmac_wrapper/tx_core_reset]
+    connect_bd_net [get_bd_pins bd_clock_reset_ctrl/tx_chan_flush] [get_bd_pins dcmac_wrapper/tx_channel_flush]
+    connect_bd_net [get_bd_pins bd_clock_reset_ctrl/tx_serdes_reset] [get_bd_pins dcmac_wrapper/tx_serdes_reset]
+    connect_bd_net [get_bd_pins bd_clock_reset_ctrl/rx_core_reset] [get_bd_pins dcmac_wrapper/rx_core_reset]
+    connect_bd_net [get_bd_pins bd_clock_reset_ctrl/rx_chan_flush] [get_bd_pins dcmac_wrapper/rx_channel_flush]
+    connect_bd_net [get_bd_pins bd_clock_reset_ctrl/rx_serdes_reset] [get_bd_pins dcmac_wrapper/rx_serdes_reset]
+
+    current_bd_instance $oldCurInst
+
+    validate_bd_design
+    save_bd_design
+    close_bd_design $design_name
 
     return 0
 }

@@ -62,3 +62,36 @@ module clk_to_flexif_clk (
     assign flexif_clk = {6{clk}};
 
 endmodule
+
+// Two 200GAUI-4 ports on one DCMAC (ports 0 and 2): each takes two channels, clocked by its own
+// GT quad (clk0 for channels 0-1, clk1 for channels 2-3)
+module clk2_to_serdes_clk (
+	(* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 clk0 CLK" *) input  clk0,
+	(* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 clk1 CLK" *) input  clk1,
+    (* X_INTERFACE_INFO = "xilinx.com:signal:gt_usrclk:1.0 serdes_clk CLK" *) (* X_INTERFACE_PARAMETER = "XIL_INTERFACENAME serdes_clk, FREQ_HZ 664062000, PARENT_ID undef, PHASE 0.0" *) output wire [5:0] serdes_clk
+);
+
+    assign serdes_clk = {1'b0, 1'b0, clk1, clk1, clk0, clk0};
+
+endmodule
+
+module clk2_to_alt_serdes_clk (
+	(* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 clk0 CLK" *) input  clk0,
+	(* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 clk1 CLK" *) input  clk1,
+    (* X_INTERFACE_INFO = "xilinx.com:signal:gt_usrclk:1.0 serdes_clk CLK" *) (* X_INTERFACE_PARAMETER = "XIL_INTERFACENAME serdes_clk, FREQ_HZ 332031000, PARENT_ID undef, PHASE 0.0" *) output wire [5:0] serdes_clk
+);
+
+    assign serdes_clk = {1'b0, 1'b0, clk1, clk1, clk0, clk0};
+
+endmodule
+
+// Both GT quads out of reset
+module gt_reset_done_and (
+    input  wire a,
+    input  wire b,
+    output wire y
+);
+
+    assign y = a & b;
+
+endmodule

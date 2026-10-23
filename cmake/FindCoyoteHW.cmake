@@ -154,6 +154,15 @@ set(EN_NET_0 1 CACHE STRING "QSFP port 0")
 # Use QSFP port 1
 set(EN_NET_1 0 CACHE STRING "QSFP port 1")
 
+# Network ports. Above 1, each vFPGA has a port of its own (vFPGA i on port i, so N_REGIONS must
+# equal it), each with its own stack, IP and MAC; RDMA only, and on the V80 up to the two ports
+# of the DCMAC that QSFP port 0 uses.
+set(N_NET_PORTS 1 CACHE STRING "Network ports, one per vFPGA when above 1")
+
+# Make a shell reset (each driver load) wait for the GTs it resets before resetting the DCMAC
+# (dcmac_reset_ctrl REWAIT); always on with several ports
+set(DCMAC_REWAIT 0 CACHE STRING "DCMAC reset sequence waits for the GTs after a shell reset")
+
 # Enable host networking 
 set(EN_HOST_NETWORKING 0 CACHE STRING "Enable host networking")
 
@@ -629,7 +638,7 @@ macro(validation_checks_hw)
             set(N_WBS 4)
         endif()
 
-        # Ports, only one
+        # Ports: one, or one per vFPGA (N_NET_PORTS), which keeps EN_NET_0 as the first
         if(EN_NET_0 AND EN_NET_1)
             message(FATAL_ERROR "Both network ports enabled.")
         else()
@@ -637,6 +646,28 @@ macro(validation_checks_hw)
             if(EN_NET_1)
                 set(QSFP 1)
             endif()
+        endif()
+
+        if(N_NET_PORTS GREATER 1)
+            if(NOT FDEV_NAME STREQUAL "v80")
+                message(FATAL_ERROR "N_NET_PORTS above 1 is only supported on the V80.")
+            endif()
+            if(N_NET_PORTS GREATER 2)
+                message(FATAL_ERROR "N_NET_PORTS: at most 2, the ports of the DCMAC that QSFP port 0 uses.")
+            endif()
+            # Without it, the second port's link may not come up after a driver load
+            set(DCMAC_REWAIT 1)
+            if(NOT N_REGIONS EQUAL N_NET_PORTS)
+                message(FATAL_ERROR "N_NET_PORTS above 1 gives each vFPGA its own port: set N_REGIONS=${N_NET_PORTS}.")
+            endif()
+            if(NOT EN_RDMA OR EN_TCP OR EN_SNIFFER OR EN_HOST_NETWORKING)
+                message(FATAL_ERROR "N_NET_PORTS above 1 supports RDMA only (no TCP, sniffer or host networking).")
+            endif()
+            if(NOT EN_NET_0 OR EN_NET_1)
+                message(FATAL_ERROR "N_NET_PORTS above 1 starts at QSFP port 0: set EN_NET_0=1, EN_NET_1=0.")
+            endif()
+        elseif(NOT N_NET_PORTS EQUAL 1)
+            message(FATAL_ERROR "N_NET_PORTS must be at least 1.")
         endif()
 
         ##

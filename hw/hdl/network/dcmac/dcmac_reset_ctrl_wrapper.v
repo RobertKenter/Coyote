@@ -26,7 +26,12 @@
  */
 
 // Simple Verilog wrapper for the DCMAC reset controller, allowing it to be included in the block diagram
-module dcmac_reset_ctrl_wrapper (
+module dcmac_reset_ctrl_wrapper #(
+    parameter N_CHANNELS = 2,
+    parameter REWAIT = 0,
+    parameter GT_MIN_WAIT_CYCLES = 50000000,
+    parameter GT_WAIT_TIMEOUT_CYCLES = 500000000
+) (
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 sys_clk CLK" *)
     (* X_INTERFACE_PARAMETER = "ASSOCIATED_RESET gt_reset:tx_serdes_reset:rx_serdes_reset" *)
     input  wire        sys_clk,
@@ -76,10 +81,17 @@ module dcmac_reset_ctrl_wrapper (
 
     (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 axis_resetn RST" *)
     (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
-    output wire        axis_resetn
+    output wire        axis_resetn,
+
+    output wire [23:0] status
 );
 
-    dcmac_reset_ctrl inst_dcmac_reset_ctrl (
+    dcmac_reset_ctrl #(
+        .N_CHANNELS             (N_CHANNELS),
+        .REWAIT                 (REWAIT),
+        .GT_MIN_WAIT_CYCLES     (GT_MIN_WAIT_CYCLES),
+        .GT_WAIT_TIMEOUT_CYCLES (GT_WAIT_TIMEOUT_CYCLES)
+    ) inst_dcmac_reset_ctrl (
         .sys_clk          (sys_clk),
         .dcmac_core_clk   (dcmac_core_clk),
         .dcmac_axis_clk   (dcmac_axis_clk),
@@ -93,7 +105,8 @@ module dcmac_reset_ctrl_wrapper (
         .rx_core_reset    (rx_core_reset),
         .rx_serdes_reset  (rx_serdes_reset),
         .rx_chan_flush    (rx_chan_flush),
-        .axis_resetn      (axis_resetn)
+        .axis_resetn      (axis_resetn),
+        .status           (status)
     );
 
 endmodule

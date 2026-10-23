@@ -38,6 +38,17 @@ static int n_mac_addrs = 0;
 module_param_array(mac_addr, charp, &n_mac_addrs, 0000);
 MODULE_PARM_DESC(mac_addr, "FPGA MAC addresses (hex), one per device, comma-separated");
 
+/// The second network port's IP and MAC addresses (shells with two ports); by default port 0's + 1
+char *ip_addr_p1[MAX_FPGA_DEVICES] = {NULL, NULL, NULL, NULL};
+static int n_ip_addrs_p1 = 0;
+module_param_array(ip_addr_p1, charp, &n_ip_addrs_p1, 0000);
+MODULE_PARM_DESC(ip_addr_p1, "Second network port's IP addresses (hex), one per device; default: port 0's + 1");
+
+char *mac_addr_p1[MAX_FPGA_DEVICES] = {NULL, NULL, NULL, NULL};
+static int n_mac_addrs_p1 = 0;
+module_param_array(mac_addr_p1, charp, &n_mac_addrs_p1, 0000);
+MODULE_PARM_DESC(mac_addr_p1, "Second network port's MAC addresses (hex), one per device; default: port 0's + 1");
+
 /// End-of-start-up time (in clock cycles); after which reconfiguration is assumed completed
 /// Primarily needed on the U55C, which has no mechanism to detect when the bitstream has been loaded
 long int eost = 1000000;

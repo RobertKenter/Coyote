@@ -174,8 +174,10 @@ cThread::cThread(int32_t vfid, pid_t hpid, uint32_t device, std::function<void(i
         qpair->local.uintToGid(16, ibv_ip_addr);
         qpair->local.uintToGid(24, ibv_ip_addr);
 
-        // QPN is obtained from the vfid and ctid 
-        qpair->local.qpn = ((vfid & N_REG_MASK) << PID_BITS) | (ctid & PID_MASK); 
+        // QPN is obtained from the vfid and ctid; with a network port per vFPGA, the port's
+        // stack serves this vFPGA alone and numbers its QPs by ctid
+        qpair->local.qpn = fcnfg.n_net_ports > 1 ? (ctid & PID_MASK)
+                                                 : ((vfid & N_REG_MASK) << PID_BITS) | (ctid & PID_MASK);
         if (qpair->local.qpn == -1) {
             throw std::runtime_error("ERROR: Coyote PID incorrect, vfid: " + std::to_string(vfid));
         }

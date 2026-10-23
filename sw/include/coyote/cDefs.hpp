@@ -418,6 +418,9 @@ typedef struct __attribute__((packed)) {
 
     /// Set to true if either RDMA or TCP is enabled
     bool en_net = { false };
+
+    /// Network ports; above 1, vFPGA i has port i, with a stack of its own
+    int32_t n_net_ports = { 1 };
     
     /// Number of host DMA channels (typically, 3: streming data, sync/offload and writeback)
     int32_t n_hdma_chan = { 0 };
@@ -436,6 +439,10 @@ typedef struct __attribute__((packed)) {
         en_pr = (cnfg >> 4) & 0x1;
         en_rdma = (cnfg >> 16) & 0x1;
         en_tcp = (cnfg >> 17) & 0x1;
+        n_net_ports = (cnfg >> 20) & 0xf;
+        if (n_net_ports == 0) {
+            n_net_ports = 1;  // drivers that predate the field
+        }
         n_hdma_chan = (cnfg >> 32) & 0xff;
         n_fpga_reg = (cnfg >> 48) & 0xff;
         en_net = en_rdma || en_tcp;

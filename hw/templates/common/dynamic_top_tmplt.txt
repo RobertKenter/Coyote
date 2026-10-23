@@ -63,6 +63,20 @@ module design_dynamic_top #(
     AXI4S.m                                     m_axis_card,
         
 {% endif %}
+{% if cnfg.n_net_ports > 1 %}
+    // ARP and RDMA, one network port per vFPGA
+    metaIntf.m                                  m_arp_lookup_request [N_NET_PORTS],
+    metaIntf.m                                  m_rdma_qp_interface [N_NET_PORTS],
+    metaIntf.m                                  m_rdma_conn_interface [N_NET_PORTS],
+    metaIntf.m                                  m_rdma_sq [N_NET_PORTS],
+    metaIntf.s                                  s_rdma_cq [N_NET_PORTS],
+    metaIntf.s                                  s_rdma_rq_rd [N_NET_PORTS],
+    metaIntf.s                                  s_rdma_rq_wr [N_NET_PORTS],
+    AXI4S.s                                     s_axis_rdma [N_NET_PORTS],
+    AXI4S.m                                     m_axis_rdma_req [N_NET_PORTS],
+    AXI4S.m                                     m_axis_rdma_rsp [N_NET_PORTS],
+
+{% else %}
 {% if cnfg.en_net %}
     // ARP
     metaIntf.m                                  m_arp_lookup_request,
@@ -80,6 +94,7 @@ module design_dynamic_top #(
     AXI4S.m                                     m_axis_rdma_req,
     AXI4S.m                                     m_axis_rdma_rsp,
 
+{% endif %}
 {% endif %}     
 {% if cnfg.en_tcp %}
     // TCP/IP
@@ -484,9 +499,17 @@ module design_dynamic_top #(
     // ================-----------------------------------------------------------------
     // ARP
     // ================-----------------------------------------------------------------
+{% if cnfg.n_net_ports > 1 %}
+    metaIntf #(.STYPE(logic [ARP_LUP_REQ_BITS-1:0])) arp_lup_req_s0 [N_NET_PORTS] ();
+
+    for(genvar p = 0; p < N_NET_PORTS; p++) begin : g_arp_port
+        meta_reg_array #(.DATA_BITS(ARP_LUP_REQ_BITS), .N_STAGES(N_REG_DYN_HOST_S1)) inst_arp_reg (.aclk(aclk), .aresetn(aresetn), .s_meta(arp_lup_req_s0[p]), .m_meta(m_arp_lookup_request[p]));
+    end
+{% else %}
     metaIntf #(.STYPE(logic [ARP_LUP_REQ_BITS-1:0])) arp_lup_req_s0 ();
 
     meta_reg_array #(.DATA_BITS(ARP_LUP_REQ_BITS), .N_STAGES(N_REG_DYN_HOST_S1)) (.aclk(aclk), .aresetn(aresetn), .s_meta(arp_lup_req_s0), .m_meta(m_arp_lookup_request));
+{% endif %}
 
 {% endif %}
 {% if cnfg.en_rdma %}
@@ -494,6 +517,85 @@ module design_dynamic_top #(
     // RDMA
     // ================-----------------------------------------------------------------
 
+{% if cnfg.n_net_ports > 1 %}
+    // Slice 0 and port binding: vFPGA p has network port p, whose stack sees it as vFPGA 0
+    // ----------------------------------------------------------------------
+    metaIntf #(.STYPE(rdma_qp_ctx_t)) rdma_qp_interface_s0 [N_NET_PORTS] ();
+    metaIntf #(.STYPE(rdma_qp_conn_t)) rdma_conn_interface_s0 [N_NET_PORTS] ();
+
+    metaIntf #(.STYPE(dreq_t)) rdma_sq_s0 [N_NET_PORTS] ();
+    metaIntf #(.STYPE(ack_t)) rdma_cq_s0 [N_NET_PORTS] ();
+    metaIntf #(.STYPE(req_t)) rdma_rq_rd_s0 [N_NET_PORTS] ();
+    metaIntf #(.STYPE(req_t)) rdma_rq_wr_s0 [N_NET_PORTS] ();
+    AXI4S #(.AXI4S_DATA_BITS(AXI_NET_BITS)) axis_rdma_in_s0 [N_NET_PORTS] ();
+    AXI4S #(.AXI4S_DATA_BITS(AXI_NET_BITS)) axis_rdma_out_req_s0 [N_NET_PORTS] ();
+    AXI4S #(.AXI4S_DATA_BITS(AXI_NET_BITS)) axis_rdma_out_rsp_s0 [N_NET_PORTS] ();
+
+    metaIntf #(.STYPE(dreq_t)) rdma_sq_s1 [N_REGIONS] ();
+    metaIntf #(.STYPE(ack_t)) rdma_cq_s1 [N_REGIONS] ();
+    metaIntf #(.STYPE(ack_t)) rdma_host_cq_s1 [N_REGIONS] ();
+    metaIntf #(.STYPE(req_t)) rdma_rq_rd_s1 [N_REGIONS] ();
+    metaIntf #(.STYPE(req_t)) rdma_rq_wr_s1 [N_REGIONS] ();
+    AXI4S #(.AXI4S_DATA_BITS(AXI_NET_BITS)) axis_rdma_in_s1 [N_REGIONS] ();
+    AXI4S #(.AXI4S_DATA_BITS(AXI_NET_BITS)) axis_rdma_out_req_s1 [N_REGIONS] ();
+    AXI4S #(.AXI4S_DATA_BITS(AXI_NET_BITS)) axis_rdma_out_rsp_s1 [N_REGIONS] ();
+
+    for(genvar p = 0; p < N_NET_PORTS; p++) begin : g_rdma_port
+        rdma_slice_array_dyn #(
+            .N_STAGES(N_REG_DYN_NET_S0)
+        ) inst_rdma_slice_array_0 (
+            .aclk(aclk),
+            .aresetn(aresetn),
+
+            .m_rdma_qp_interface_n(m_rdma_qp_interface[p]),
+            .m_rdma_conn_interface_n(m_rdma_conn_interface[p]),
+
+            .m_rdma_sq_n(m_rdma_sq[p]),
+            .s_rdma_cq_n(s_rdma_cq[p]),
+            .s_rdma_rq_rd_n(s_rdma_rq_rd[p]),
+            .s_rdma_rq_wr_n(s_rdma_rq_wr[p]),
+            .m_axis_rdma_rd_req_n(m_axis_rdma_req[p]),
+            .m_axis_rdma_rd_rsp_n(m_axis_rdma_rsp[p]),
+            .s_axis_rdma_wr_n(s_axis_rdma[p]),
+
+            .s_rdma_qp_interface_u(rdma_qp_interface_s0[p]),
+            .s_rdma_conn_interface_u(rdma_conn_interface_s0[p]),
+
+            .s_rdma_sq_u(rdma_sq_s0[p]),
+            .m_rdma_cq_u(rdma_cq_s0[p]),
+            .m_rdma_rq_rd_u(rdma_rq_rd_s0[p]),
+            .m_rdma_rq_wr_u(rdma_rq_wr_s0[p]),
+            .s_axis_rdma_rd_req_u(axis_rdma_out_req_s0[p]),
+            .s_axis_rdma_rd_rsp_u(axis_rdma_out_rsp_s0[p]),
+            .m_axis_rdma_wr_u(axis_rdma_in_s0[p])
+        );
+
+        rdma_port_bind #(
+            .PORT(p)
+        ) inst_rdma_port_bind (
+            .aclk(aclk),
+            .aresetn(aresetn),
+
+            .m_rdma_sq_net(rdma_sq_s0[p]),
+            .s_rdma_cq_net(rdma_cq_s0[p]),
+            .s_rdma_rq_rd_net(rdma_rq_rd_s0[p]),
+            .s_rdma_rq_wr_net(rdma_rq_wr_s0[p]),
+            .m_axis_rdma_rd_req_net(axis_rdma_out_req_s0[p]),
+            .m_axis_rdma_rd_rsp_net(axis_rdma_out_rsp_s0[p]),
+            .s_axis_rdma_wr_net(axis_rdma_in_s0[p]),
+
+            .s_rdma_sq_user(rdma_sq_s1[p]),
+            .m_rdma_cq_user(rdma_cq_s1[p]),
+            .m_rdma_host_cq_user(rdma_host_cq_s1[p]),
+            .m_rdma_rq_rd_user(rdma_rq_rd_s1[p]),
+            .m_rdma_rq_wr_user(rdma_rq_wr_s1[p]),
+            .s_axis_rdma_rd_req_user(axis_rdma_out_req_s1[p]),
+            .s_axis_rdma_rd_rsp_user(axis_rdma_out_rsp_s1[p]),
+            .m_axis_rdma_wr_user(axis_rdma_in_s1[p])
+        );
+    end
+
+{% else %}
     // Slice 0
     // ----------------------------------------------------------------------
     metaIntf #(.STYPE(rdma_qp_ctx_t)) rdma_qp_interface_s0 ();
@@ -570,6 +672,7 @@ module design_dynamic_top #(
         .m_axis_rdma_wr_user(axis_rdma_in_s1)
     );
 
+{% endif %}
     // Clock crossing (if enabled)
     // ----------------------------------------------------------------------
     metaIntf #(.STYPE(dreq_t)) rdma_sq_s2 [N_REGIONS] ();

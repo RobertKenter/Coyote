@@ -50,6 +50,13 @@ module cyt_top (
     (* io_buffer_type = "none" *) output wire                 qsfp0_lpmode,
     (* io_buffer_type = "none" *) output wire                 qsfp0_modseln,
 {% endif %}
+{% if cnfg.fdev == 'v80' and cnfg.n_net_ports > 1 %}
+    // GT 1: the second port of QSFP port 0's DCMAC (GTM bank 210), on its reference clock
+    (* io_buffer_type = "none" *) input  wire[3:0]            gt1_rxp_in,
+    (* io_buffer_type = "none" *) input  wire[3:0]            gt1_rxn_in,
+    (* io_buffer_type = "none" *) output  wire[3:0]           gt1_txp_out,
+    (* io_buffer_type = "none" *) output  wire[3:0]           gt1_txn_out,
+{% endif %}
 {% if (cnfg.fdev != 'u50d') and (cnfg.fdev != 'v80') %}  
     // GT 1
     (* io_buffer_type = "none" *) input  wire[3:0]            gt1_rxp_in,
@@ -511,6 +518,12 @@ module cyt_top (
         .gt0_txn_out(gt0_txn_out),
         .gt0_refclk_p(gt0_refclk_p),
         .gt0_refclk_n(gt0_refclk_n),
+    {% if cnfg.fdev == 'v80' and cnfg.n_net_ports > 1 %}
+        .gt1_rxp_in(gt1_rxp_in),
+        .gt1_rxn_in(gt1_rxn_in),
+        .gt1_txp_out(gt1_txp_out),
+        .gt1_txn_out(gt1_txn_out),
+    {% endif %}
     {% if (cnfg.fdev != 'u50d') and (cnfg.fdev != 'v80') %}  
         .gt1_rxp_in(gt1_rxp_in),
         .gt1_rxn_in(gt1_rxn_in),

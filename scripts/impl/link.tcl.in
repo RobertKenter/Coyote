@@ -68,6 +68,10 @@ if {$cfg(build_static) eq 1} {
 }
 add_files -fileset [get_filesets constrs_1] "$hw_dir/constraints/$cfg(fdev)/shell/impl"
 add_files -fileset [get_filesets constrs_1] "$hw_dir/constraints/$cfg(fdev)/dynamic/impl"
+if {$cfg(n_net_ports) > 1} {
+    # The second network port's pins
+    add_files -fileset [get_filesets constrs_1] "$hw_dir/constraints/$cfg(fdev)/dynamic/impl_net_1"
+}
 
 # Shell
 add_files "$dcp_dir/shell/shell_synthed.dcp"
