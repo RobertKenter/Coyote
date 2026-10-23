@@ -211,12 +211,22 @@ void unmap_bars(struct bus_driver_data *bd_data, struct pci_dev *pdev) {
     }
 }
 
-void wait_until_busy_cleared(struct bus_driver_data *bd_data) {
-    int busy;
-    do {
+int wait_until_busy_cleared(struct bus_driver_data *bd_data) {
+    for (int i = 0; i < DMA_CTX_BUSY_POLLS; i++) {
+        uint32_t val;
+
         usleep_range(DMA_MIN_SLEEP_CMD, DMA_MIN_SLEEP_CMD);
-        busy = ioread32(bd_data->bar[BAR_DMA_CONFIG] + QDMA_CTX_CMD_REG) & 0x1;
-    } while (busy);
+        val = ioread32(bd_data->bar[BAR_DMA_CONFIG] + QDMA_CTX_CMD_REG);
+        if (val == ~0U) {
+            pr_warn_ratelimited("QDMA context register reads all ones: the card is gone\n");
+            return -ENODEV;
+        }
+        if (!(val & 0x1)) {
+            return 0;
+        }
+    }
+    pr_warn_ratelimited("QDMA context command still busy after %d polls\n", DMA_CTX_BUSY_POLLS);
+    return -ETIMEDOUT;
 }
 
 void clear_ctx_reg(struct bus_driver_data *bd_data, int32_t qid, int32_t sel) {
@@ -336,7 +346,9 @@ int enable_queue(struct bus_driver_data *bd_data, int32_t qid, bool c2h, bool is
     }
     iowrite32(reg_val, bd_data->bar[BAR_DMA_CONFIG] + QDMA_CTX_CMD_REG);
     wmb();
-    wait_until_busy_cleared(bd_data);
+    if (wait_until_busy_cleared(bd_data)) {
+        goto fail;
+    }
 
     // Read the hardware register (idl_stp_b, Table 7 in spec) to check the queue is enabled
     // Fist, issue read command
@@ -353,7 +365,9 @@ int enable_queue(struct bus_driver_data *bd_data, int32_t qid, bool c2h, bool is
     }
     iowrite32(reg_val, bd_data->bar[BAR_DMA_CONFIG] + QDMA_CTX_CMD_REG);
     wmb();
-    wait_until_busy_cleared(bd_data);
+    if (wait_until_busy_cleared(bd_data)) {
+        goto fail;
+    }
     
     // Then, read bit 41, corresponding to idl_stp_b
     reg_val = ioread32(bd_data->bar[BAR_DMA_CONFIG] + QDMA_CTX_DATA_REG_START + 4);
@@ -388,7 +402,9 @@ int enable_queue(struct bus_driver_data *bd_data, int32_t qid, bool c2h, bool is
    
         iowrite32(reg_val, bd_data->bar[BAR_DMA_CONFIG] + QDMA_CTX_CMD_REG);
         wmb();
-        wait_until_busy_cleared(bd_data);
+        if (wait_until_busy_cleared(bd_data)) {
+            goto fail;
+        }
         
         // Verify prefetch contex is indeed set to valid; first issue read command
         reg_val = QDMA_CTX_BUSY_VAL_DEAULT |
@@ -469,7 +485,9 @@ int enable_queue(struct bus_driver_data *bd_data, int32_t qid, bool c2h, bool is
    
     iowrite32(reg_val, bd_data->bar[BAR_DMA_CONFIG] + QDMA_CTX_CMD_REG);
     wmb();
-    wait_until_busy_cleared(bd_data);
+    if (wait_until_busy_cleared(bd_data)) {
+        goto fail;
+    }
     dbg_info("enabled completion context for qid %d", qid);
 
     // Set-up complete, add to array of queues
@@ -757,6 +775,7 @@ int pci_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
     struct bus_driver_data *bd_data = devm_kzalloc(&pdev->dev, sizeof(struct bus_driver_data), GFP_KERNEL);
     if (!bd_data) {
         dev_err(&pdev->dev, "device memory region not obtained\n");
+        ret_val = -ENOMEM;
         goto err_alloc;
     }
 
@@ -819,7 +838,7 @@ int pci_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
 
     // DMA addressing
     dbg_info("sizeof(dma_addr_t) == %ld\n", sizeof(dma_addr_t));
-    ret_val = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64));
+    ret_val = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(TLB_PADDR_RANGE)); // 44
     if (ret_val) {
         dev_err(&pdev->dev, "failed to set 64b DMA mask\n");
         goto err_mask;
@@ -956,7 +975,6 @@ err_irq_en:
 err_dev_id:
     if (!bd_data->regions_in_use) { pci_disable_device(pdev); }
 err_enable:
-    kfree(bd_data);
 err_alloc:
 end:
     dbg_info("probe returning %d\n", ret_val);

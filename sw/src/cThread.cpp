@@ -211,10 +211,8 @@ cThread::~cThread() {
 	mapped_pages.clear();
 	munmapFpga();
 
-    // Unregister Coyote thread ID
-	ioctl(fd, IOCTL_UNREGISTER_CTID, &tmp);
-
     // Terminate user interrupt thread and release the variables
+    // Done before releasing the ctid, which another cThread could otherwise obtain and register its own eventfd for
     if (efd != -1) {
 		ioctl(fd, IOCTL_UNREGISTER_EVENTFD, &tmp);
 
@@ -225,9 +223,10 @@ cThread::~cThread() {
 
 		close(efd);
 		close(terminate_efd);
-
-        ioctl(fd, IOCTL_SET_NOTIFICATION_PROCESSED, &tmp);
 	}
+
+    // Unregister Coyote thread ID
+	ioctl(fd, IOCTL_UNREGISTER_CTID, &tmp);
 
     // Disable RDMA, if enabled and set-up
     if (fcnfg.en_rdma && is_connected) {
@@ -251,7 +250,7 @@ void cThread::postCmd(uint64_t offs_3, uint64_t offs_2, uint64_t offs_1, uint64_
     // Check outstanding commands; to avoid oversaturating the command FIFO
     while (cmd_cnt > (CMD_FIFO_DEPTH - CMD_FIFO_THR)) {
         #ifdef EN_AVX
-        cmd_cnt = fcnfg.en_avx ? LOW_32(_mm256_extract_epi32(cnfg_reg_avx[static_cast<uint32_t>(CnfgAvxRegs::CTRL_REG)], 0x0)) :
+        cmd_cnt = fcnfg.en_avx ? LOW_32(_mm256_extract_epi32(avxRegs()[static_cast<uint32_t>(CnfgAvxRegs::CTRL_REG)], 0x0)) :
                                 cnfg_reg[static_cast<uint32_t>(CnfgLegRegs::CTRL_REG)];
         #else
         cmd_cnt = cnfg_reg[static_cast<uint32_t>(CnfgLegRegs::CTRL_REG)];
@@ -265,7 +264,7 @@ void cThread::postCmd(uint64_t offs_3, uint64_t offs_2, uint64_t offs_1, uint64_
     // Send the commands
     #ifdef EN_AVX
     if (fcnfg.en_avx) {
-        cnfg_reg_avx[static_cast<uint32_t>(CnfgAvxRegs::CTRL_REG)] = _mm256_set_epi64x(offs_3, offs_2, offs_1, offs_0);
+        avxRegs()[static_cast<uint32_t>(CnfgAvxRegs::CTRL_REG)] = _mm256_set_epi64x(offs_3, offs_2, offs_1, offs_0);
     } else {
     #endif
         cnfg_reg[static_cast<uint32_t>(CnfgLegRegs::VADDR_WR_REG)] = offs_3;
@@ -863,7 +862,7 @@ uint32_t cThread::checkCompleted(CoyoteOper coper) const {
 		} else {
             #ifdef EN_AVX
 			if (fcnfg.en_avx) 
-				return _mm256_extract_epi32(cnfg_reg_avx[static_cast<uint32_t>(CnfgAvxRegs::STAT_DMA_REG) + ctid], 1);
+				return _mm256_extract_epi32(avxRegs()[static_cast<uint32_t>(CnfgAvxRegs::STAT_DMA_REG) + ctid], 1);
 			else
             #endif
 				return (HIGH_32(cnfg_reg[static_cast<uint32_t>(CnfgLegRegs::STAT_DMA_REG) + ctid]));
@@ -874,7 +873,7 @@ uint32_t cThread::checkCompleted(CoyoteOper coper) const {
 		} else {
             #ifdef EN_AVX
 			if (fcnfg.en_avx)
-            	return _mm256_extract_epi32(cnfg_reg_avx[static_cast<uint32_t>(CnfgAvxRegs::STAT_DMA_REG) + ctid], 0);
+            	return _mm256_extract_epi32(avxRegs()[static_cast<uint32_t>(CnfgAvxRegs::STAT_DMA_REG) + ctid], 0);
 			else 
             #endif
 				return (LOW_32(cnfg_reg[static_cast<uint32_t>(CnfgLegRegs::STAT_DMA_REG) + ctid]));
@@ -885,7 +884,7 @@ uint32_t cThread::checkCompleted(CoyoteOper coper) const {
 		} else {
             #ifdef EN_AVX
 			if (fcnfg.en_avx) 
-				return _mm256_extract_epi32(cnfg_reg_avx[static_cast<uint32_t>(CnfgAvxRegs::STAT_DMA_REG) + ctid], 2);
+				return _mm256_extract_epi32(avxRegs()[static_cast<uint32_t>(CnfgAvxRegs::STAT_DMA_REG) + ctid], 2);
 			else 
             #endif
 				return (LOW_32(cnfg_reg[static_cast<uint32_t>(CnfgLegRegs::STAT_RDMA_REG) + ctid]));
@@ -896,7 +895,7 @@ uint32_t cThread::checkCompleted(CoyoteOper coper) const {
         } else {
             #ifdef EN_AVX
             if (fcnfg.en_avx) 
-                return _mm256_extract_epi32(cnfg_reg_avx[static_cast<uint32_t>(CnfgAvxRegs::STAT_DMA_REG) + ctid], 3);
+                return _mm256_extract_epi32(avxRegs()[static_cast<uint32_t>(CnfgAvxRegs::STAT_DMA_REG) + ctid], 3);
             else
             #endif
                 return (HIGH_32(cnfg_reg[static_cast<uint32_t>(CnfgLegRegs::STAT_RDMA_REG) + ctid]));  
@@ -917,7 +916,7 @@ void cThread::clearCompleted() {
 
     #ifdef EN_AVX
 	if (fcnfg.en_avx) {
-		cnfg_reg_avx[static_cast<uint32_t>(CnfgAvxRegs::CTRL_REG)] = _mm256_set_epi64x(0, CTRL_CLR_STAT | ((ctid & CTRL_PID_MASK) << CTRL_PID_OFFS), 0, CTRL_CLR_STAT | ((ctid & CTRL_PID_MASK) << CTRL_PID_OFFS));
+		avxRegs()[static_cast<uint32_t>(CnfgAvxRegs::CTRL_REG)] = _mm256_set_epi64x(0, CTRL_CLR_STAT | ((ctid & CTRL_PID_MASK) << CTRL_PID_OFFS), 0, CTRL_CLR_STAT | ((ctid & CTRL_PID_MASK) << CTRL_PID_OFFS));
     } else {
     #endif
         cnfg_reg[static_cast<uint32_t>(CnfgLegRegs::CTRL_REG_2)] = CTRL_CLR_STAT | ((ctid & CTRL_PID_MASK) << CTRL_PID_OFFS);
@@ -932,7 +931,7 @@ void cThread::doArpLookup(uint32_t ip_addr) {
 
     #ifdef EN_AVX
     if (fcnfg.en_avx) {
-        cnfg_reg_avx[static_cast<uint32_t>(CnfgAvxRegs::NET_ARP_REG)] = _mm256_set_epi64x(0, 0, 0, ip_addr);
+        avxRegs()[static_cast<uint32_t>(CnfgAvxRegs::NET_ARP_REG)] = _mm256_set_epi64x(0, 0, 0, ip_addr);
     } else {
     #endif
         cnfg_reg[static_cast<uint32_t>(CnfgLegRegs::NET_ARP_REG)] = ip_addr;
@@ -1026,7 +1025,7 @@ void cThread::writeQpContext(uint32_t port) {
         // Write this information to the vFPGA configuration registers
         #ifdef EN_AVX
         if (fcnfg.en_avx) {
-            cnfg_reg_avx[static_cast<uint32_t>(CnfgAvxRegs::RDMA_CTX_REG)] = _mm256_set_epi64x(0, offs[2], offs[1], offs[0]);
+            avxRegs()[static_cast<uint32_t>(CnfgAvxRegs::RDMA_CTX_REG)] = _mm256_set_epi64x(0, offs[2], offs[1], offs[0]);
         } else {
         #endif
             cnfg_reg[static_cast<uint32_t>(CnfgLegRegs::RDMA_CTX_REG_0)] = offs[0];
@@ -1049,7 +1048,7 @@ void cThread::writeQpContext(uint32_t port) {
 
         #ifdef EN_AVX
         if (fcnfg.en_avx) {
-            cnfg_reg_avx[static_cast<uint32_t>(CnfgAvxRegs::RDMA_CONN_REG)] = _mm256_set_epi64x(0, offs[2], offs[1], offs[0]);
+            avxRegs()[static_cast<uint32_t>(CnfgAvxRegs::RDMA_CONN_REG)] = _mm256_set_epi64x(0, offs[2], offs[1], offs[0]);
         } else {
         #endif
             cnfg_reg[static_cast<uint32_t>(CnfgLegRegs::RDMA_CONN_REG_0)] = offs[0];
@@ -1093,7 +1092,7 @@ void cThread::writeQpCtx(uint32_t port, bool write_rpsn, bool write_rkey) {
         // Write this information to the vFPGA configuration registers
         #ifdef EN_AVX
         if (fcnfg.en_avx) {
-            cnfg_reg_avx[static_cast<uint32_t>(CnfgAvxRegs::RDMA_CTX_REG)] = _mm256_set_epi64x(0, offs[2], offs[1], offs[0]);
+            avxRegs()[static_cast<uint32_t>(CnfgAvxRegs::RDMA_CTX_REG)] = _mm256_set_epi64x(0, offs[2], offs[1], offs[0]);
         } else {
         #endif
             cnfg_reg[static_cast<uint32_t>(CnfgLegRegs::RDMA_CTX_REG_0)] = offs[0];
@@ -1129,7 +1128,7 @@ void cThread::writeQpConnection(uint32_t port) {
 
         #ifdef EN_AVX
         if (fcnfg.en_avx) {
-            cnfg_reg_avx[static_cast<uint32_t>(CnfgAvxRegs::RDMA_CONN_REG)] = _mm256_set_epi64x(0, offs[2], offs[1], offs[0]);
+            avxRegs()[static_cast<uint32_t>(CnfgAvxRegs::RDMA_CONN_REG)] = _mm256_set_epi64x(0, offs[2], offs[1], offs[0]);
         } else {
         #endif
             cnfg_reg[static_cast<uint32_t>(CnfgLegRegs::RDMA_CONN_REG_0)] = offs[0];
@@ -1253,20 +1252,21 @@ void* cThread::initRDMA(uint32_t buffer_size, uint16_t port, const char* server_
             throw std::runtime_error("ERROR: Could not create a socket");
         }
 
+        int optval = 1;
+        ::setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
+
         struct sockaddr_in server; 
         server.sin_family = AF_INET; 
         server.sin_port = htons(port); 
         server.sin_addr.s_addr = INADDR_ANY; 
 
         if (::bind(sockfd, (struct sockaddr*) &server, sizeof(server)) < 0) {
+            releaseConn();
             throw std::runtime_error("ERROR: Could not bind a socket");
         }
 
-        if (sockfd < 0) {
-            throw std::runtime_error("ERROR: Could not listen to a port: " + std::to_string(port));
-        }
-
         if (listen(sockfd, MAX_NUM_CLIENTS) == -1) {
+            releaseConn();
             throw std::runtime_error("ERROR: sockfd listen failed");
         }
 
@@ -1282,8 +1282,7 @@ void* cThread::initRDMA(uint32_t buffer_size, uint16_t port, const char* server_
             if ((n = ::read(connfd, recv_buf, sizeof(ibvQ))) == sizeof(ibvQ)) {
                 memcpy(&(qpair->remote), recv_buf, sizeof(ibvQ));
             } else {
-                ::close(connfd);
-                is_connected = false;
+                releaseConn();
                 throw std::runtime_error("ERROR: Failed to read queue from client");
             }
 
@@ -1291,8 +1290,7 @@ void* cThread::initRDMA(uint32_t buffer_size, uint16_t port, const char* server_
 
             // Send QP to the client
             if (::write(connfd, &(qpair->local), sizeof(ibvQ)) != sizeof(ibvQ))  {
-                ::close(connfd);
-                is_connected = false;
+                releaseConn();
                 throw std::runtime_error("ERROR: Failed to send queue to client");
             }
 
@@ -1304,10 +1302,23 @@ void* cThread::initRDMA(uint32_t buffer_size, uint16_t port, const char* server_
             return mem;
 
         } else {
+            releaseConn();
             throw std::runtime_error("ERROR: Failed to accept connection from client");
         }
     }
 
+}
+
+void cThread::releaseConn() {
+    if (connfd != -1) {
+        ::close(connfd);
+        connfd = -1;
+    }
+    if (sockfd != -1) {
+        ::close(sockfd);
+        sockfd = -1;
+    }
+    is_connected = false;
 }
 
 void cThread::closeConn() {
@@ -1318,22 +1329,21 @@ void cThread::closeConn() {
         if (sockfd != -1) {
             // Process request close request
             char recv_buf[RECV_BUFF_SIZE];
-            if (read(connfd, recv_buf, sizeof(int32_t)) == sizeof(int32_t)) {
+            ssize_t n = read(connfd, recv_buf, sizeof(int32_t));
+            if (n == sizeof(int32_t)) {
                 int32_t request;
                 memcpy(&request, recv_buf, sizeof(int32_t));
                 if (request == DEF_OP_CLOSE_CONN) {
-                    close(connfd);
-                    connfd = -1;
-                    close(sockfd);
-                    sockfd = -1;
-                    is_connected = false;
                     std::cout << "Successfully closed connection to the client" << std::endl;
                 } else {
                     std::cerr << "ERROR: Received an unexpected request from the client: " << request << std::endl;
-                }  
+                }
+            } else if (n == 0) {
+                std::cout << "Client disconnected without a close request. Closing connection" << std::endl;
             } else {
                 std::cerr << "ERROR: Failed to read close connection request from the client" << std::endl;
             }
+            releaseConn();
 
         // This cThread was a client
         } else {
@@ -1341,9 +1351,7 @@ void cThread::closeConn() {
             if (write(connfd, &req, sizeof(int32_t)) != sizeof(int32_t)) {
                 std::cerr << "ERROR: Failed to send close connection request to the server" << std::endl;
             }
-            close(connfd);
-            connfd = -1;
-            is_connected = false;
+            releaseConn();
             std::cout << "Successfully closed connection to the server" << std::endl;
         }
     }
@@ -1379,14 +1387,14 @@ void cThread::printDebug() const {
     
     #ifdef EN_AVX
 	if (fcnfg.en_avx) {
-		std::cout << std::setw(35) << "Sent local reads: \t" <<  _mm256_extract_epi64(cnfg_reg_avx[static_cast<uint64_t>(CnfgAvxRegs::STAT_REG_0)], 0x0) << std::endl;
-        std::cout << std::setw(35) << "Sent local writes: \t" <<  _mm256_extract_epi64(cnfg_reg_avx[static_cast<uint64_t>(CnfgAvxRegs::STAT_REG_0)], 0x1) << std::endl;
-        std::cout << std::setw(35) << "Sent remote reads: \t" <<  _mm256_extract_epi64(cnfg_reg_avx[static_cast<uint64_t>(CnfgAvxRegs::STAT_REG_0)], 0x2) << std::endl;
-        std::cout << std::setw(35) << "Sent remote writes: \t" <<  _mm256_extract_epi64(cnfg_reg_avx[static_cast<uint64_t>(CnfgAvxRegs::STAT_REG_0)], 0x3) << std::endl;
+		std::cout << std::setw(35) << "Sent local reads: \t" <<  _mm256_extract_epi64(avxRegs()[static_cast<uint64_t>(CnfgAvxRegs::STAT_REG_0)], 0x0) << std::endl;
+        std::cout << std::setw(35) << "Sent local writes: \t" <<  _mm256_extract_epi64(avxRegs()[static_cast<uint64_t>(CnfgAvxRegs::STAT_REG_0)], 0x1) << std::endl;
+        std::cout << std::setw(35) << "Sent remote reads: \t" <<  _mm256_extract_epi64(avxRegs()[static_cast<uint64_t>(CnfgAvxRegs::STAT_REG_0)], 0x2) << std::endl;
+        std::cout << std::setw(35) << "Sent remote writes: \t" <<  _mm256_extract_epi64(avxRegs()[static_cast<uint64_t>(CnfgAvxRegs::STAT_REG_0)], 0x3) << std::endl;
         
-        std::cout << std::setw(35) << "Invalidations received: \t" <<  _mm256_extract_epi64(cnfg_reg_avx[static_cast<uint64_t>(CnfgAvxRegs::STAT_REG_1)], 0x0) << std::endl;
-        std::cout << std::setw(35) << "Page faults received: \t" <<  _mm256_extract_epi64(cnfg_reg_avx[static_cast<uint64_t>(CnfgAvxRegs::STAT_REG_1)], 0x1) << std::endl;
-        std::cout << std::setw(35) << "Notifications received: \t" <<  _mm256_extract_epi64(cnfg_reg_avx[static_cast<uint64_t>(CnfgAvxRegs::STAT_REG_1)], 0x2) << std::endl;
+        std::cout << std::setw(35) << "Invalidations received: \t" <<  _mm256_extract_epi64(avxRegs()[static_cast<uint64_t>(CnfgAvxRegs::STAT_REG_1)], 0x0) << std::endl;
+        std::cout << std::setw(35) << "Page faults received: \t" <<  _mm256_extract_epi64(avxRegs()[static_cast<uint64_t>(CnfgAvxRegs::STAT_REG_1)], 0x1) << std::endl;
+        std::cout << std::setw(35) << "Notifications received: \t" <<  _mm256_extract_epi64(avxRegs()[static_cast<uint64_t>(CnfgAvxRegs::STAT_REG_1)], 0x2) << std::endl;
 	} else {
     #endif
 		std::cout << std::setw(35) << "Sent local reads: \t" <<  cnfg_reg[static_cast<uint64_t>(CnfgLegRegs::STAT_REG_0)] << std::endl;

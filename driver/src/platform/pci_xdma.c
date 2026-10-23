@@ -569,6 +569,7 @@ int pci_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
     struct bus_driver_data *bd_data = devm_kzalloc(&pdev->dev, sizeof(struct bus_driver_data), GFP_KERNEL);
     if (!bd_data) {
         dev_err(&pdev->dev, "device memory region not obtained\n");
+        ret_val = -ENOMEM;
         goto err_alloc;
     }
 
@@ -631,7 +632,7 @@ int pci_probe(struct pci_dev *pdev, const struct pci_device_id *id) {
 
     // DMA addressing
     dbg_info("sizeof(dma_addr_t) == %ld\n", sizeof(dma_addr_t));
-    ret_val = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64));
+    ret_val = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(TLB_PADDR_RANGE)); // 44
     if (ret_val) {
         dev_err(&pdev->dev, "failed to set 64b DMA mask\n");
         goto err_mask;
@@ -765,7 +766,6 @@ err_irq_en:
 err_dev_id:
     if (!bd_data->regions_in_use) { pci_disable_device(pdev); }
 err_enable:
-    kfree(bd_data);
 err_alloc:
 end:
     dbg_info("probe returning %d\n", ret_val);
