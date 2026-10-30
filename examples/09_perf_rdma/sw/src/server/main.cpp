@@ -78,9 +78,11 @@ int main(int argc, char *argv[])  {
     // CLI arguments
     bool operation;
     unsigned int min_size, max_size, n_runs;
+    int vfpga;
 
     boost::program_options::options_description runtime_options("Coyote Perf RDMA Options");
     runtime_options.add_options()
+        ("vfpga,v", boost::program_options::value<int>(&vfpga)->default_value(DEFAULT_VFPGA_ID), "vFPGA, and with PERF_PORTS its network port")
         ("operation,o", boost::program_options::value<bool>(&operation)->default_value(false), "Benchmark operation: READ(0) or WRITE(1)")
         ("runs,r", boost::program_options::value<unsigned int>(&n_runs)->default_value(N_RUNS_DEFAULT), "Number of times to repeat the test")
         ("min_size,x", boost::program_options::value<unsigned int>(&min_size)->default_value(MIN_TRANSFER_SIZE_DEFAULT), "Starting (minimum) transfer size")
@@ -97,7 +99,7 @@ int main(int argc, char *argv[])  {
 
     // Allocate Coyothe threa and set-up RDMA connections, buffer etc.
     // initRDMA is explained in more detail in client/main.cpp
-    coyote::cThread coyote_thread(DEFAULT_VFPGA_ID, getpid());
+    coyote::cThread coyote_thread(vfpga, getpid());
     int *mem = (int *) coyote_thread.initRDMA(max_size, coyote::DEF_PORT);
     if (!mem) { throw std::runtime_error("Could not allocate memory; exiting..."); }
 
